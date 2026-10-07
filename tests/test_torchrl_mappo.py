@@ -206,6 +206,7 @@ def test_real_spawn_training_save_resume_and_portable_transport(tmp_path):
     observation = batch["agents", "observation"][0, 0].numpy()
     expected = policy_action(actor, observation)
     (bundle / "pusher.pt").write_bytes(PUSHER.read_bytes())
+    random_state = torch.get_rng_state().clone()
     checkpoint = save_mappo(
         bundle / "transport.pt",
         actor,
@@ -217,6 +218,7 @@ def test_real_spawn_training_save_resume_and_portable_transport(tmp_path):
         training=curriculum.training,
         curriculum=curriculum.state,
     )
+    torch.testing.assert_close(torch.get_rng_state(), random_state, rtol=0, atol=0)
     with pytest.raises(ValueError, match="reward/reset settings differ"):
         save_mappo(
             bundle / "wrong.pt",
@@ -274,7 +276,13 @@ def test_real_spawn_training_save_resume_and_portable_transport(tmp_path):
         load_mappo(moved / "transport.pt")
 
 
-def test_curriculum_advances_without_replacing_collector_data(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("layouts", "expected_level", "expected_layout"),
+    [(("near", "rear", "side", "front"), 3, "front"), (("near", "rear"), 1, "rear")],
+)
+def test_curriculum_advances_without_replacing_collector_data(
+    tmp_path, monkeypatch, layouts, expected_level, expected_layout
+):
     cfg = ApproachConfig(seconds=0.2, layout="near")
     env = TorchRLTransportEnv(cfg, num_envs=1, asynchronous=False)
     actor, critic = make_mappo_networks()
@@ -283,7 +291,7 @@ def test_curriculum_advances_without_replacing_collector_data(tmp_path, monkeypa
         env,
         actor,
         frames_per_batch=4,
-        total_frames=8,
+        total_frames=12,
         auto_register_policy_transforms=True,
     )
     curriculum = ApproachCurriculum(
@@ -296,13 +304,15 @@ def test_curriculum_advances_without_replacing_collector_data(tmp_path, monkeypa
         horizon=4,
         validate_every=1,
         minimum_rollouts=1,
+        layouts=layouts,
     )
     monkeypatch.setattr(curriculum, "_validate", lambda: 1.0)
     for batch in collector:
         loss.value_estimator(batch)
         curriculum.record(batch, loss(batch.reshape(-1)))
-    assert curriculum.level == 2 and curriculum.transitions == 8
-    assert env.worlds.call("config")[0].layout == "side"
+    assert curriculum.level == expected_level and curriculum.transitions == 12
+    assert env.worlds.call("config")[0].layout == expected_layout
+    assert curriculum.training["curriculum"] == list(layouts)
     curriculum.close()
     collector.shutdown()
 

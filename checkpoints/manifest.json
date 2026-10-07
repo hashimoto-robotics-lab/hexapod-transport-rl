@@ -13,5 +13,13 @@
     "source": "runs/walkaround_rl_result_20261006/pusher.pt",
     "purpose": "Selected learned pusher adapted to handover poses",
     "sha256": "4955887423c2b77f5415be77c2e16613e2a77e918b9a8f91cfb7aa58aa9522e4"
+  },
+  "lesson_transport.pt": {
+    "source": "runs/torchrl_course_stable_20261007/transport.pt",
+    "purpose": "TorchRL MAPPO short task: near/rear alignment followed by frozen pusher.pt; random initialization, reward only",
+    "sha256": "3cacf937878738f033c14ece1ffa929e48649a507a59cfa2e2d1fbca0691c2f5",
+    "team_steps": 32768,
+    "seed": 20261008,
+    "evaluation": "docs/results/short_task_20261007.json"
   }
 }

@@ -30,9 +30,11 @@
 | 初期配置 | `approach.py` の `ApproachConfig` と `_sample_start_pose()` |
 | 回り込みから押す動作へ移る条件 | `approach.py` の `HANDOVER_*` と `approach_ready()` |
 | 学習率・PPOのclip幅・各損失の係数 | `torchrl_mappo.py` の `MAPPOSettings` |
-| 初期配置の難度を上げる条件 | `torchrl_training.py` の `ApproachCurriculum` |
+| 初期配置の段階・難度を上げる条件 | `torchrl_training.py` の `ApproachCurriculum` |
 
 既定値は従来の成功した学習と同じです。係数は各環境の設定に渡し、保存モデルにも記録します。
+学生の短時間課題は2段階・32,768ステップ・学習率1e-4・minibatch 128をノートブックで指定します。
+測定結果とモデルの出典は [実験記録](training-time.md) を参照してください。
 関数の式を編集した場合は新しいランタイム・新しい実験名で学習します。
 旧MAPPOの保存モデルは従来の形式で読み込みます。新しいTorchRLモデルも `.pt` に保存しますが、
 形式名を分け、actor・critic・optimizer・報酬・カリキュラムを記録します。重みは相互互換ではありません。

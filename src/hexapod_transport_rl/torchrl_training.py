@@ -38,10 +38,16 @@ class ApproachCurriculum:
         horizon: int,
         validate_every=50,
         minimum_rollouts=50,
+        layouts=CURRICULUM_LAYOUTS,
         resume: dict | None = None,
     ):
         if min(validate_every, minimum_rollouts, horizon) < 1:
             raise ValueError("Curriculum intervals and horizon must be positive")
+        self.layouts = tuple(layouts)
+        if not self.layouts or any(
+            layout not in CURRICULUM_LAYOUTS for layout in self.layouts
+        ):
+            raise ValueError("Select curriculum layouts from near/rear/side/front")
         self.config, self.env, self.actor = config, env, actor
         self.output = Path(output)
         self.output.mkdir(parents=True, exist_ok=True)
@@ -62,7 +68,7 @@ class ApproachCurriculum:
             settings=asdict(settings),
             approach_config=asdict(config),
             provenance=env.provenance,
-            curriculum=list(CURRICULUM_LAYOUTS),
+            curriculum=list(self.layouts),
             advance_threshold=0.75,
             validate_every=validate_every,
             minimum_rollouts=minimum_rollouts,
@@ -70,9 +76,11 @@ class ApproachCurriculum:
             validation_seed_stride=1000,
         )
         if resume is not None:
-            if ApproachConfig(**resume["approach_config"]) != config or resume[
-                "training"
-            ]["settings"] != asdict(settings):
+            if (
+                ApproachConfig(**resume["approach_config"]) != config
+                or resume["training"]["settings"] != asdict(settings)
+                or resume["training"]["curriculum"] != list(self.layouts)
+            ):
                 raise ValueError("Resume requires the same reward and MAPPO settings")
             state = resume["curriculum"]
             self.rollouts, self.level = state["rollouts"], state["level"]
@@ -80,7 +88,7 @@ class ApproachCurriculum:
             self.transitions = self.initial_transitions = state["transitions"]
             self.last_validation_success_rate = state["validation_success_rate"]
             self.training["resumed_from_transitions"] = self.transitions
-        env.set_layout(CURRICULUM_LAYOUTS[self.level])
+        env.set_layout(self.layouts[self.level])
         (self.output / "run.json").write_text(
             json.dumps(self.training, indent=2) + "\n"
         )
@@ -92,7 +100,7 @@ class ApproachCurriculum:
             level=self.level,
             phase_start=self.phase_start,
             transitions=self.transitions,
-            layout=CURRICULUM_LAYOUTS[self.level],
+            layout=self.layouts[self.level],
             validation_success_rate=self.last_validation_success_rate,
         )
 
@@ -104,7 +112,7 @@ class ApproachCurriculum:
                 asset_root=self.env.provenance["asset_root"],
                 asynchronous=self.env.asynchronous,
             )
-        self.validation_env.call("set_layout", CURRICULUM_LAYOUTS[self.level])
+        self.validation_env.call("set_layout", self.layouts[self.level])
         obs, _ = self.validation_env.reset(seed=62000 + self.level * 1000)
         finished = np.zeros(self.validation_env.num_envs, dtype=bool)
         successes = np.zeros_like(finished)
@@ -124,18 +132,18 @@ class ApproachCurriculum:
         """Call once after updating a rollout; metrics are TorchRL's returned losses."""
         self.rollouts += 1
         self.transitions += batch.numel()
-        collected_layout = CURRICULUM_LAYOUTS[self.level]
+        collected_layout = self.layouts[self.level]
         if self.rollouts % self.validate_every == 0:
             success = self._validate()
             self.last_validation_success_rate = success
             if (
                 success >= 0.75
                 and self.rollouts - self.phase_start >= self.minimum_rollouts
-                and self.level < len(CURRICULUM_LAYOUTS) - 1
+                and self.level < len(self.layouts) - 1
             ):
                 self.level += 1
                 self.phase_start = self.rollouts
-                self.env.set_layout(CURRICULUM_LAYOUTS[self.level])
+                self.env.set_layout(self.layouts[self.level])
         elapsed = time.monotonic() - self.started
         done = batch["next", "done"]
         successes = batch["next", "success"] & done
@@ -143,7 +151,7 @@ class ApproachCurriculum:
             rollouts=self.rollouts,
             team_steps=self.transitions,
             layout=collected_layout,
-            next_layout=CURRICULUM_LAYOUTS[self.level],
+            next_layout=self.layouts[self.level],
             validation_success_rate=self.last_validation_success_rate,
             elapsed_seconds=elapsed,
             team_steps_per_second=(self.transitions - self.initial_transitions)

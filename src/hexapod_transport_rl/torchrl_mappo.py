@@ -166,7 +166,10 @@ def save_mappo(
     # The initial training layout may be near while the comparison config is mixed.
     if replace(config, layout=actual_config.layout) != actual_config:
         raise ValueError("Saved reward/reset settings differ from the training world")
-    _, pushing_saved = load_checkpoint(pushing_checkpoint)
+    # Saving must not change the next exploration sample. Constructing the old
+    # pusher for validation initializes parameters before loading its weights.
+    with torch.random.fork_rng(devices=[]):
+        _, pushing_saved = load_checkpoint(pushing_checkpoint)
     pushing_config = PushConfig(**pushing_saved["config"])
     if pushing_config.num_robots != 2 or pushing_config.shape != "T":
         raise ValueError("Expected the frozen two-robot T pusher")

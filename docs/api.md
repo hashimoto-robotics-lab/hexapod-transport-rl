@@ -224,7 +224,9 @@ criticは全機の観測・共有重みです。探索幅3成分も共有しま�
 
 `ApproachCurriculum(config, env, actor, output, seed=..., settings=..., horizon=...)` は配置と記録だけを担当します。
 更新後の `record(batch, metrics)` で50ロールアウトごとに別seedで検証し、
-成功率75%以上・段階内50ロールアウト以上で `near → rear → side → front` に進みます。
+成功率75%以上・段階内50ロールアウト以上で難度を上げます。
+既定は `near → rear → side → front`、学生の短時間課題は
+`layouts=("near", "rear"), validate_every=25` を指定します。
 変更は後続のresetへ適用され、進行中のエピソードは維持します。検証経験は学習へ渡しません。
 
 ## TorchRLの保存モデルでGymnasiumを操作する
@@ -232,7 +234,7 @@ criticは全機の観測・共有重みです。探索幅3成分も共有しま�
 ```python
 from hexapod_transport_rl import load_mappo, policy_action
 
-actor, critic, saved = load_mappo("runs/reward_trial_01/baseline/transport.pt")
+actor, critic, saved = load_mappo("checkpoints/lesson_transport.pt")
 env = gym.make("HexapodApproach-v0", config=ApproachConfig(**saved["approach_config"]))
 observation, info = env.reset(seed=80000)
 action = policy_action(actor, observation)  # (2,3)、評価用のtanh(loc)

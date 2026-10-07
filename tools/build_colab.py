@@ -16,7 +16,9 @@ CELLS = [
 機体の色は元のロボットと同じ、床にはグリッドを表示します。胴体に押すための突っ張りは追加しません。
 
 このノートブックの目的は、研究の仕組みとAPIを理解し、**報酬を変えると挙動がどう変わるかを検証すること**です。
-研究の問いの例：「機体同士の接触ペナルティを強くすると、安全に回り込めるか。それとも動かなくなるか？」
+最初は短時間で学べるよう、**Tの後方から2台が整列して押す課題**に絞ります。
+研究の問いの例：「距離が縮まる報酬をなくすと、同じ学習時間で運搬できるか？」
+前方から大きく回り込む課題は、基本課題を理解してから取り組む拡張です。
 
 ## 学習済みロボットへコマンドを送るところから始める
 歩行モデルはすでに学習済みです。前後・左右・旋回の速度指令を受け取り、18関節の目標角度を出します。
@@ -34,7 +36,7 @@ Tとロボットの状態 → 上位方策 → 各機の速度指令 → 固定�
 GAEとPPO損失の計算はTorchRLに任せ、ノートブックには収集・更新のループを普通のPythonで書きます。
 デモを教師にせず、報酬から学びます。
 
-同梱の参考モデルは以前のMAPPO実装で学習したものです。
+短時間課題の参考モデルもTorchRLで学習したものです。固定した押す方策は以前のMAPPO実装で学習しています。
 新しい学習も機体別の確率比をclipし、`TanhNormal` で行動を−1〜1に収めます。
 ただしライブラリ・初期化・細部の設定が違うため、以前と同じ成功率になる保証はありません。
 歩行モデルと押す方策を固定し、回り込みactorを新しく学習します。
@@ -241,11 +243,11 @@ print(inspect.getsource(approach_reward_terms))
     (
         "markdown",
         r"""## 6. 仮説を立て、報酬を1項目だけ変える
-例：「接触ペナルティを3倍にすると、機体同士の接触が減る」。
-接触を避けるために遠回りしたり、動かなくなる可能性もあります。
+例：「距離が縮まる進捗報酬をなくすと、整列が学びにくくなる」。
+成功時の報酬は残るため、進捗報酬なしでも探索から学べる可能性はあります。
 成功率・時間・動画も見て、仮説を検証しましょう。
 
-以下の `robot_contact=12.0` が学生の編集箇所です。
+以下の `progress=0.0` が学生の編集箇所です。次は3.0など別の値を1つだけ試しましょう。
 `replace()` は既定の設定の1項目だけを変更し、元の設定を残します。
 報酬設定は環境ごとに持つため、他の条件や並列ワーカーへ混ざりません。
 """,
@@ -256,17 +258,20 @@ print(inspect.getsource(approach_reward_terms))
 from hexapod_transport_rl import ApproachRewardWeights
 
 baseline_reward = ApproachRewardWeights()
-changed_reward = replace(baseline_reward, robot_contact=12.0)
+changed_reward = replace(baseline_reward, progress=0.0)
 
-baseline_config = ApproachConfig(easier_reset_fraction=0.25, reward_weights=baseline_reward)
+baseline_config = ApproachConfig(
+    seconds=20.0, max_yaw_degrees=15.0, position_jitter=0.04, yaw_jitter=0.08,
+    easier_reset_fraction=0.25, reward_weights=baseline_reward,
+)
 changed_config = replace(baseline_config, reward_weights=changed_reward)
-conditions = {"baseline": baseline_config, "strong_contact": changed_config}
+conditions = {"baseline": baseline_config, "no_progress": changed_config}
 """,
     ),
     (
         "markdown",
         r"""まず同じ初期状態・同じ行動で報酬を確認します。
-この短い1ステップで機体同士が接触しなければ、変更した項は0で、報酬も同じです。
+停止指令では距離がほとんど縮まらなければ、変更した項は小さく、報酬もほぼ同じです。
 「係数を変更しただけで常に報酬が変わる」わけではありません。
 `time` の係数を変えると、停止指令のこのステップでも違いを確認できます。
 """,
@@ -286,14 +291,17 @@ conditions = {"baseline": baseline_config, "strong_contact": changed_config}
         r"""## 7. 同じ学習条件で、2種類の報酬を学習する
 両条件とも回り込みactorは同じseedでランダム初期化します。
 歩行モデル・押すモデル・物理条件・学習量・PPOの設定・カリキュラムの規則を共通にします。
-近い配置 → 後方 → 側方 → 前方と進み、検証成功率75%以上・各段階50ロールアウト以上で難度が上がります。
-`ApproachCurriculum` は50ロールアウトごとに、更新後の方策を別の検証seedで評価します。
+短時間課題では **近い配置 → 後方** の2段階とし、Tの角度を±15度、位置のばらつきを±4 cmにします。
+後方配置では各機の向きも変わるので、整列するための前進・左右移動・旋回を学びます。
+`ApproachCurriculum` は25ロールアウトごとに別の検証seedで評価し、成功率75%以上・50ロールアウト以上で難度を上げます。
 難度変更は次のエピソードのresetから適用し、現在進行中のエピソードは最後まで進めます。
 この補助クラスは配置の変更と記録だけを行い、学習の損失を計算したり行動を指定したりしません。
 報酬によって進む段階が変わる可能性があるため、到達段階もログで確認してください。
 
-初期値の **256チームステップ／条件は動作確認だけ**です。運搬成功を期待する学習量ではありません。
-一巡できたら、新しい `EXPERIMENT_NAME` と `TRAINING_STEPS = 409600` を設定して本学習します。
+初期値の **32,768チームステップ／条件** で実際に学習します。256ステップは接続確認だけに使います。
+CPUを2コアに制限したローカル実測では約3分30秒／条件、比較2条件で学習は約7分でした。
+準備・評価・動画を含めたColabの時間はCPUや通信状況で変わります。まず10〜20分程度を目安にし、下の実測ログを確認してください。
+卒論の本実験では、試行数・学習seedを増やします。長い学習が常に改善につながるとは限らないため、検証ログも見ます。
 1チームステップは「2台のいる世界を1回進める」ことです。並列数×horizonが1ロールアウトの収集量です。
 `TRAINING_STEPS` は `NUM_ENVS * HORIZON` の倍数で指定します。TorchRLはロールアウト単位で収集するため、
 端数を指定すると実際の収集量は切り上がります。
@@ -308,11 +316,11 @@ conditions = {"baseline": baseline_config, "strong_contact": changed_config}
         "code",
         r"""from hexapod_transport_rl.experiments import create_experiment
 
-EXPERIMENT_NAME = "reward_trial_01"
+EXPERIMENT_NAME = "short_reward_trial_01"
 TRAINING_SEED = 20261008
 NUM_ENVS = 2
-HORIZON = 64
-TRAINING_STEPS = 256
+HORIZON = 128
+TRAINING_STEPS = 32768
 
 RUN_DIR = create_experiment(PROJECT_DIR, EXPERIMENT_NAME)
 PUSHER = RUN_DIR / "source_snapshot/checkpoints/pusher.pt"
@@ -321,9 +329,9 @@ print("1条件あたりの収集量:", TRAINING_STEPS, "チームステップ")
     ),
     (
         "markdown",
-        r"""### 参考：以前に学習した運搬モデルの動きを見る
-自分の比較学習の前に、Tを回り込んで押す目標の挙動を確認します。
-これは以前の報酬学習モデルの再生で、今回の学習の結果ではありません。
+        r"""### 参考：同じ短時間課題で学習したモデルの動きを見る
+自分の比較学習の前に、後方で整列してTを押す目標の挙動を確認します。
+これはTorchRLで32,768ステップ学習した同梱モデルの再生で、今回の実行の結果ではありません。
 この動画や行動を教師として学習に使いません。
 """,
     ),
@@ -332,10 +340,10 @@ print("1条件あたりの収集量:", TRAINING_STEPS, "チームステップ")
         r"""from hexapod_transport_rl import evaluate_transport
 import imageio.v3 as iio
 
-REFERENCE = PROJECT_DIR / "checkpoints/transport.pt"
+REFERENCE = PROJECT_DIR / "checkpoints/lesson_transport.pt"
 evaluate_transport(
     checkpoint=REFERENCE, output=RUN_DIR / "reference.json",
-    episodes=1, seed=70000, workers=1, layout="front", episode_seconds=100.0,
+    episodes=1, seed=83000, workers=1, layout="rear", max_yaw_degrees=15.0, episode_seconds=30.0,
     video_dir=RUN_DIR / "reference_video", video_width=640, video_height=480,
     video_fps=5, fast_video=True,
 )
@@ -367,7 +375,7 @@ from hexapod_transport_rl import (
     ApproachCurriculum, save_mappo,
 )
 
-settings = MAPPOSettings()
+settings = MAPPOSettings(learning_rate=1e-4, minibatch_size=128)
 FRAMES_PER_BATCH = NUM_ENVS * HORIZON
 models = {}
 for name, config in conditions.items():
@@ -389,6 +397,12 @@ for name, config in conditions.items():
     curriculum = ApproachCurriculum(
         config=config, env=envs, actor=actor, output=output,
         seed=TRAINING_SEED, settings=settings, horizon=HORIZON,
+        validate_every=25, layouts=("near", "rear"),
+    )
+    save_mappo(
+        output / "initial.pt", actor, critic, optimizer,
+        config=config, pushing_checkpoint=PUSHER, provenance=envs.provenance,
+        training=curriculum.training, curriculum=curriculum.state,
     )
     for batch in collector:
         loss.value_estimator(batch)  # 最終観測も使い、TorchRLがadvantageを計算
@@ -432,7 +446,7 @@ for name, config in conditions.items():
         r"""from hexapod_transport_rl import load_mappo, policy_action
 
 actor, critic, saved = load_mappo(models["baseline"])
-env = gym.make("HexapodApproach-v0", config=replace(baseline_config, layout="front"))
+env = gym.make("HexapodApproach-v0", config=replace(baseline_config, layout="rear"))
 observation, info = env.reset(seed=83000)
 action = policy_action(actor, observation)
 print("方策が決めた2台分の行動:", action)
@@ -460,18 +474,18 @@ for name in conditions:
     display(log.tail(3))
     speed = log["team_steps_per_second"].iloc[-1]
     print(name, "学習速度:", speed, "チームステップ/秒")
-    print("409600ステップの概算:", round(409600 / speed / 3600, 2), "時間/条件")
+    print("実際の学習時間:", round(log["elapsed_seconds"].iloc[-1] / 60, 2), "分/条件")
+    print("32768ステップの概算:", round(32768 / speed / 60, 2), "分/条件")
 """,
     ),
     (
         "markdown",
         r"""## 8. 学習と別の初期配置で定量評価する
 同じ学習量の**最後のモデル**を比較します。テスト結果を見てモデルを選び直しません。
-両条件に同じテストseedを使い、前方・側方から始めます。
+両条件に同じテストseedを使い、近い配置・後方配置から始めます。
 回り込みが成功すると、共通の押す方策へ切り替えて運搬を続けます。
 
-初期値は2試行・10秒で、評価APIの動作確認です。本評価では
-`EVALUATION_EPISODES = 50`、`EPISODE_SECONDS = 100.0` に変更します。
+初期値は6試行／配置・制限60秒です。本評価では `EVALUATION_EPISODES = 50` に増やします。
 50試行の結果にも初期配置によるばらつきがあります。
 学習seedも少なくとも3種類で実験を繰り返し、条件ごとの平均・ばらつきを報告しましょう。
 
@@ -483,9 +497,9 @@ for name in conditions:
         "code",
         r"""from hexapod_transport_rl import evaluate_transport
 
-EVALUATION_EPISODES = 2
-EPISODE_SECONDS = 10.0
-TEST_SEEDS = {"front": 80000, "side": 81000}
+EVALUATION_EPISODES = 6
+EPISODE_SECONDS = 60.0
+TEST_SEEDS = {"near": 80000, "rear": 81000}
 
 reports = {}
 for name, checkpoint in models.items():
@@ -497,6 +511,7 @@ for name, checkpoint in models.items():
             seed=seed,
             workers=NUM_ENVS,
             layout=layout,
+            max_yaw_degrees=baseline_config.max_yaw_degrees,
             episode_seconds=EPISODE_SECONDS,
         )
 """,
@@ -528,6 +543,7 @@ display(comparison)
         "markdown",
         r"""## 9. 図と動画で違いを説明する
 まず成功率の図を見て、続いて同じ初期配置の動画を比較します。
+動画は学習前・進捗報酬あり・進捗報酬なしを同じ後方配置から30秒まで再生し、定量評価は60秒で行います。
 成功率だけでなく、回り込む経路・機体同士の接触・停止・脚と胴体の接触を観察してください。
 接触したエピソードの数だけでは接触時間や強さは分からないため、必要なら評価JSONの接触力積も調べます。
 """,
@@ -548,7 +564,8 @@ plt.show()
         r"""import imageio.v3 as iio
 
 videos = []
-for name, checkpoint in models.items():
+video_models = {"before_training": RUN_DIR / "baseline/initial.pt", **models}
+for name, checkpoint in video_models.items():
     video_dir = RUN_DIR / "videos" / name
     evaluate_transport(
         checkpoint=checkpoint,
@@ -556,8 +573,9 @@ for name, checkpoint in models.items():
         episodes=1,
         seed=82000,
         workers=1,
-        layout="front",
-        episode_seconds=EPISODE_SECONDS,
+        layout="rear",
+        max_yaw_degrees=baseline_config.max_yaw_degrees,
+        episode_seconds=30.0,
         video_dir=video_dir,
         video_width=640,
         video_height=480,
@@ -565,7 +583,7 @@ for name, checkpoint in models.items():
         fast_video=True,
     )
     videos.append(iio.imread(next(video_dir.glob("*.mp4"))))
-media.show_videos(videos, fps=5, titles=list(models))
+media.show_videos(videos, fps=5, titles=list(video_models))
 """,
     ),
     (

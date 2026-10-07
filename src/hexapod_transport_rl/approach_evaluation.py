@@ -183,7 +183,11 @@ def run_batch(
             movie = None
             frame_index = 0
             if renderer is not None:
-                camera.lookat[:] = [*(core.goal / 2), 0.15]
+                # Include the starting robots and the destination in one fixed view.
+                visible_xy = np.vstack((core.robot_xy, core.cargo_xy, core.goal))
+                lower, upper = visible_xy.min(axis=0), visible_xy.max(axis=0)
+                camera.lookat[:] = [*((lower + upper) / 2), 0.15]
+                camera.distance = max(6.0, 1.8 * float((upper - lower).max()))
                 movie = imageio.get_writer(
                     video_path / f"seed_{seed}.mp4", fps=video_fps
                 )
