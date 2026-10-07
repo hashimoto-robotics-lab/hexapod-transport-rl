@@ -7,6 +7,7 @@ cover its handover region. No demonstration actions or supervised targets exist.
 import hashlib
 import os
 import time
+from dataclasses import asdict, replace
 from functools import partial
 from pathlib import Path
 
@@ -18,6 +19,7 @@ import torch
 from .api import HexapodPushEnv
 from .config import STAND_HEIGHT, PushConfig, rotation
 from .mappo import load_checkpoint, train_rollouts
+from .rewards import PushRewardWeights
 from .types import Info, ResetResult
 
 RESET_DISTRIBUTION = dict(
@@ -85,7 +87,11 @@ def compose(
     _, _, nav_saved = load_approach_checkpoint(navigation_checkpoint)
     _, push_saved = load_checkpoint(pushing_checkpoint)
     _, original_push = load_checkpoint(nav_saved["pushing_checkpoint"])
-    if original_push["config"] != push_saved["config"]:
+    original_config = asdict(PushConfig(**original_push["config"]))
+    new_config = asdict(PushConfig(**push_saved["config"]))
+    original_config.pop("reward_weights")
+    new_config.pop("reward_weights")
+    if original_config != new_config:
         raise ValueError("The two pushers must share the same physical configuration")
     output = Path(output)
     if output.exists():
@@ -115,6 +121,8 @@ def train_handover(
     horizon: int = 64,
     seed: int = 20261009,
     asset_root: str | Path | None = None,
+    *,
+    reward_weights: PushRewardWeights | None = None,
 ) -> Path:
     """Continue MAPPO from a pusher, sampling the navigator's handover region."""
     if min(iterations, num_envs, horizon) < 1 or num_envs * horizon < 2:
@@ -124,6 +132,8 @@ def train_handover(
     np.random.seed(seed)
     _, saved = load_checkpoint(checkpoint)
     cfg = PushConfig(**saved["config"])
+    if reward_weights is not None:
+        cfg = replace(cfg, reward_weights=reward_weights)
     if cfg.num_robots != 2 or cfg.shape != "T":
         raise ValueError("Expected a two-robot T pusher")
     output = Path(output)
@@ -149,6 +159,7 @@ def train_handover(
             seed=seed,
             resume=checkpoint,
             started_at=start,
+            allow_reward_change=reward_weights is not None,
         )
     finally:
         envs.close()

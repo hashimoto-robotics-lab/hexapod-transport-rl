@@ -1,140 +1,89 @@
-# Colabで進める卒業研究
+# 学生向けColab：報酬設計の比較実験
 
-プロジェクト名は **Hexapod Transport RL** です。研究題目の例は「六足ロボットの強化学習による協調物資運搬」です。
-名前・Pythonパッケージ・実行コマンドを機体の固有名から切り離しました。
-共有先は [hashimoto-robotics-lab/hexapod-transport-rl](https://github.com/hashimoto-robotics-lab/hexapod-transport-rl) です。
-ノートブックは実行手順、リポジトリはコード・形状・モデルを管理します。長い埋め込みデータはありません。
+[ノートブックを開く](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_colab.ipynb)。公開リポジトリなのでGitHub認証は不要です。
+CPUランタイム、Python 3.12・3.13に対応します。最初の準備以外は通常のライブラリ呼び出しです。
+学習もアクティブなカーネルから開始し、独立した物理世界だけを子プロセスで並列実行します。
 
-## 最初に理解すること
+## 教材で理解すること
 
-研究の目的は、学習済みの歩行能力を使い、複数機が荷物を協調して運ぶ方法を学ぶことです。
-ノートブックの冒頭で研究の動機を読み、準備後のStep 3で1台へ速度コマンドを送り、歩行を動画で確かめます。
-その後、荷物・目標・相手の観測から2台へのコマンドを決める運搬方策をMAPPOで学習します。
-固定する歩行モデルと、今回学習する運搬方策を分けて理解してください。
-歩行体験では `WalkingSimulation` の速度指令APIを使います。同じAPIで1台と4台を動かす例を実行します。
-指定したコマンドは、運搬学習の教師には使いません。
+1. 研究の動機と、固定した歩行モデル・学習する速度指令方策の関係。
+2. `WalkingSimulation` への物理速度コマンドとmediapyでの歩行観察。
+3. `ApproachEnv` の観測・正規化行動・チーム報酬・終了条件。
+4. `info["reward_terms"]` と実際に使う報酬関数の対応。
+5. 1つの係数を変更した仮説と、同じ学習条件での比較。
+6. 共通のテストseedによる成功・接触・転倒・位置誤差・所要時間と動画の評価。
 
-## GitHubからColabで開く
+回り込み報酬は `ApproachRewardWeights`、押す報酬は `PushRewardWeights` を環境の設定へ渡します。
+報酬関数の項そのものを変える場合は、`src/hexapod_transport_rl/rewards.py` の
+`approach_reward_terms()` を編集します。ソースを編集したら新規ランタイムで新しい実験を始めます。
+`PushEnv._reward_terms()` が押す動作の式です。実際に学習へ渡していない別の式をノートブックだけに作らないでください。
 
-1. READMEの [Open in Colab](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_colab.ipynb) を開く。
-2. Googleアカウントでログインし、CPUランタイムを使う。
-3. 上から順に実行する。Step 1でコード・形状・モデルを自動取得する。
+## 動作確認から研究へ
 
-**GitHubへのログイン、リポジトリへの招待、アクセストークンは不要**です。
-同じランタイムでStep 1を再実行すると、取得済みの教材を使い、学生の編集や学習結果を上書きしません。
+最初は256チームステップ／条件・評価2試行／配置・制限10秒です。
+これはAPIを接続して一巡する確認で、運搬成功を期待する学習量ではありません。
+研究では新しい実験名にして、409,600ステップ／条件・評価50試行／配置・制限100秒を目安にします。
+並列世界数はColab CPUの能力に合わせて2から調整します。描画は評価時だけ、物理更新は200 Hzです。
+GPUによるシミュレーションの高速化は組み込んでいません。
 
-## 教材の版と共有
-
-教材はこのリポジトリのルートで管理します。教員が変更したコードとノートブックをcommitして共有してください。
-`runs/` と `.venv/` はGitで共有しません。
-
-学生用ノートブックは `main` の教材を取得します。版を選ぶ設定はありません。
-`experiment.json` に取得したコミットSHAと実行時のソース・資産のハッシュを記録します。
-コードを編集した場合は、別の実験名で学習してください。
-更新した教材を取得する際は、新しいランタイムでStep 1から始めます。
-論文の再現用に特定の版を配布する場合は、教員側で教材の取得先を固定してください。
-
-## 学生が編集するコード
-
-歩行体験では `set_velocity()` の速度と `run_for()` の時間を変えます。
-運搬実験では `lesson.configure()` の実験名・mode・独立世界数・seed・押す方策の初期化を変えます。
-学習と評価の流れは、次の呼び出しで表します。
-
-```python
-pusher = lesson.prepare_pusher()
-navigator = lesson.train_navigation(pusher)
-adapted_pusher = lesson.train_handover(pusher)
-model = lesson.select_model(navigator, adapted_pusher)
-test_results = lesson.evaluate(model)
-lesson.show_results()
-lesson.show_learned_video(model)
-lesson.save_results()
-```
-
-インストール、設定の検証、別プロセスの起動、モデルの再開、記録・保存は
-`tools/colab_runtime.py` が担当します。学習曲線・CSVの生成は `tools/colab_analysis.py` にあります。
-学生は最初からこれらの内部実装を読む必要はありません。
-歩行と環境APIはセル内で直接実行します。コードを文字列にして補助APIへ渡す必要はありません。
-環境APIの `reset()` / `step()` と歩行指令は、ノートブックにコードを残しています。
-
-## 上から順に実行する
-
-| 手順 | 学生が確認すること | 生成物 |
-|---|---|---|
-| 1. GitHubから取得 | 公開されたコード・形状・モデルを取得する | プロジェクトとコミットSHA |
-| 2. ライブラリ準備 | 直接importするライブラリと、固定した並列学習環境 | セルと学習の実行環境 |
-| 3. 歩行コマンドの体験 | 速度指令APIで1台と4台の歩行を試す | 歩行動画 |
-| 4. 実験設定 | quick/research、乱数seed、独立世界数 | `experiment.json` |
-| 5. API確認 | 観測、行動、チーム報酬、終了条件 | 入出力の表示 |
-| 6. 参考方策の再生 | 学習済みの運搬動作と部位別接触 | 参考動画・評価JSON |
-| 7. 押す方策の準備 | 既存の報酬学習モデルを使うか、新規学習するか | 初期pusher |
-| 8. 回り込み学習 | カリキュラムとMAPPOの更新 | navigatorと指標 |
-| 9. 引き継ぎ位置への適応 | 押す方策の追加強化学習 | adapted pusher |
-| 10. 検証用seedでモデル選定 | 回り込み成功と運搬成功を区別する | 結合モデルと選定記録 |
-| 11. 未使用seedでテスト | 初期配置を変えて性能を確認する | 前方・側方評価JSON |
-| 12. 図表 | 学習曲線と成功率・接触・誤差 | PNG、PDF、CSV |
-| 13. 新しい方策の録画 | 参考動画と自分の結果を区別する | 自分の方策の動画 |
-| 14. 保存 | 設定・重み・ログ・動画を持ち帰る | 結果ZIP |
-
-ColabのCPUランタイムを使います。GPUによる学習高速化はこの実装には組み込んでいません。
-歩行と環境APIは、ColabのPythonで通常の `import` とAPI呼び出しを使って操作します。
-Python 3.12・3.13に対応し、既存のNumPy・PyTorchが対応範囲内なら、そのまま利用します。
-ウィンドウなしの描画設定は、MuJoCoをimportする前に準備APIが行います。
-歩行は `record=True` でRGBフレームを集め、`media.show_video(sim.frames, fps=5)` で表示します。
-参考方策と学習後の運搬動画もmediapyを使います。FFmpegは同梱のimageio-ffmpegから自動設定します。
-表示方法は [MuJoCo公式チュートリアル](https://github.com/google-deepmind/mujoco/blob/main/python/tutorial.ipynb) と共通です。
-並列学習と運搬評価は、uvで用意したPython 3.12とlockfileの専用環境で実行します。
-セルで使う版は `runtime.json`、学習で使う版は `training_runtime.json` に分けて記録します。
-MuJoCoの動画はOSMesaによるソフトウェア描画、標準640×480・5 fpsにして描画負荷を下げています。
-影・反射を省く `--fast-video` も使用します。
-物理更新は200 Hzのままです。
-[uvのPython管理](https://docs.astral.sh/uv/guides/install-python/)、[MuJoCoのPython描画](https://mujoco.readthedocs.io/en/stable/python.html)
-
-## 短い確認と本学習
-
-`quick` は各方策を数回だけ更新し、最後まで実行できることを確認します。
-新しく学習する方策の成功は期待せず、卒論の成功率として報告しません。評価時間も短縮します。
-参考方策の動画だけは、事前に学習された成功モデルの運搬を表示します。
-
-`research` では、回り込み409,600、引き継ぎ適応153,600チームステップを目安にします。
-並列世界数に合わせて反復数を計算します。元の16並列の実験と収集・更新のバッチ構成が変わるため、
-同じseedでも保存済みモデルと同じ重み・成功率になるとは限りません。
-新規の押す方策を学習する場合は追加で2段階の押す学習を実行します。
-
-ノートブックでは、実測した学習速度から本学習に必要な時間の概算を表示します。
-時間はCPUや並列数、検証頻度で変わります。最初は `quick` で一巡し、本学習には新しい実験名を指定してください。
+両条件とも同じ初期化seed・学習量・物理設定・固定歩行モデル・固定押す方策・カリキュラム規則を使います。
+カリキュラムは成功率によって進むため、報酬による到達段階の違いも記録します。
+同じ学習量の最後のモデルを共通の未使用テストseedで比較し、テスト結果からモデルを選び直しません。
+ハイパーパラメータやモデルの選定が必要なら、別の検証seedを使い、最終テストを残してください。
+総報酬は式を変えると尺度が変わるため、条件間の性能比較には使いません。
+少なくとも3つの学習seedで繰り返し、学習によるばらつきも報告します。
 
 ## 保存と再開
 
-最初の一巡では保存用の追加設定は不要です。最後の `lesson.save_results()` でZIPを保存します。
-長い本学習でDriveへ途中保存したいときだけ、Step 4の `lesson.configure()` に
-`save_to_drive=True` を追加してください。Google Driveへの接続後、途中の重みとログを定期的にコピーします。
-シミュレーションはColab内で実行し、Driveはバックアップに使います。
-同じ実験名・設定でノートブックを再実行すると、保存済みの最新checkpointから未完了分を追加学習します。
-中断後に再開する場合、すでに保存した更新は引き継ぎますが、中断時のエピソード・乱数列を完全に復元する再開ではありません。
+`create_experiment(PROJECT_DIR, name)` は新規出力先を作り、実行時のソース・資産・モデル・コミットSHA・版を保存します。
+同じ名前を再利用せず、新しい条件には新しい名前を付けます。各学習の `run.json` に報酬係数とseedを記録し、
+`metrics.jsonl` に学習速度・到達段階、`checkpoint.pt` に重み・optimizerを保存します。
+最後の `archive_results(RUN_DIR)` で結果ZIPを作り、Colabのファイル一覧からダウンロードします。
+未保存の結果はランタイムの削除で失われるため、本学習では途中結果もDrive等へコピーしてください。
 
-Driveを使わない場合は最終セルのZIPを保存してください。
-Step 4の `lesson.configure()` に `restore_results=True` を追加すると、保存したZIPをアップロードして再開できます。
-結果ZIPには使用したソース・ロボット資産のスナップショット、SHA-256、ライブラリの版も含めます。
-乱数seed・実験条件を変える場合は `lesson.configure()` の `name` を変更し、別の実験として保存します。
+保存済み実験をColabへ復元した後、通常のAPIで追加学習できます。
 
-Colabのランタイムは削除されることがあり、資源や実行時間にも変動があります。
-GitHubで教材を共有していても、ランタイム内の未保存の学習結果は失われます。
-[Colab公式FAQ](https://research.google.com/colaboratory/faq.html)
+```python
+continued = train_approach(
+    output=RUN_DIR / "baseline_continued",
+    pushing_checkpoint=PUSHER,
+    resume=RUN_DIR / "baseline/checkpoint.pt",
+    iterations=100,
+    num_envs=NUM_ENVS,
+    horizon=HORIZON,
+    seed=TRAINING_SEED,
+)
+```
 
-## 卒論で扱う範囲
+`iterations` は追加する更新数です。再開では保存済み報酬設定を引き継ぎます。
+設定も指定する場合は、保存済み設定と一致する必要があります。
+中断時のエピソード・乱数列の完全復元ではありません。条件比較では両条件の再開方針も揃えてください。
 
-固定した歩行方策の上に、協調運搬の上位方策を学習する研究です。
-脚の歩行そのものを一から学習する研究とは区別して、論文で構成を説明してください。
+## 押す報酬を研究する場合
 
-検証用seedでモデルを選び、別のテスト用seedで性能を報告します。
-記録する項目は、運搬成功率、回り込み成功率、位置・向きの誤差、胴体接触、機体同士の接触、転倒、所要時間です。
-成功率にはWilson法の95%区間も表示します。これは初期配置の試行に対する区間であり、学習seed間のばらつきを表しません。
-本評価は異なる学習seedで少なくとも3回繰り返し、平均とばらつきも報告することを推奨します。
+回り込みを固定し、両条件とも共通の押すモデルから同じ量を追加学習します。
+`train_handover` は引き継ぎ付近のランダム初期配置から、報酬のみで学習します。
 
-初期角度、初期配置、報酬、カリキュラム、学習量を変える比較実験ができます。
-まず一度に1つの条件を変え、同じテストseed集合で比較してください。
-研究で変更する定義は [コードガイド](code-guide.md) にあります。
-学習曲線のtraining successは、その時点のカリキュラムの初期配置での結果です。運搬全体のテスト成功率とは別の指標です。
-今回の回り込み環境は2台、平坦な床、T字物体1個、他の障害物なし、シミュレータから位置・姿勢を取得する条件です。
-台数・障害物・観測誤差・実機への拡張は、別に環境を拡張して検証する課題として扱います。
+```python
+from dataclasses import replace
+from hexapod_transport_rl import PushRewardWeights
+from hexapod_transport_rl.handover_training import train_handover, compose
+
+reward = replace(PushRewardWeights(), body_contact=3.0)
+pusher = train_handover(
+    checkpoint=PUSHER, output=RUN_DIR / "push_changed",
+    reward_weights=reward, iterations=150, num_envs=2, horizon=64,
+)
+model = compose(models["baseline"], pusher, RUN_DIR / "transport_changed.pt")
+```
+
+変更なしの条件も同じ元モデルから同じ更新数で追加学習してください。
+回り込みと押す段階の変更を同時に行う前に、それぞれの影響を切り分けます。
+元のモデルは上書きしません。報酬のみを変えた押すモデルの結合は可能ですが、物理設定の異なるモデルは結合できません。
+
+## 実験の範囲
+
+このノートブックの回り込み学習は2台、平坦な床、T字物体1つ、他の障害物なし、
+位置・姿勢をシミュレータから取得する条件です。脚・足による押し動作を使い、胴体への押し具は追加しません。
+歩行APIは1〜4台、基本の押す環境は2〜4台ですが、同梱運搬モデル・回り込みは2台専用です。
+4台での役割割当・観測・報酬・中央criticの拡張は別に実装・学習して評価します。

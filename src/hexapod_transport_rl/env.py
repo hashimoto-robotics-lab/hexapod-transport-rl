@@ -5,7 +5,6 @@ contacts, then computes termination and a shared team reward. See docs/code-guid
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 
 import mujoco
@@ -34,22 +33,6 @@ MIN_ROBOT_UPRIGHT = 0.5
 MIN_CARGO_UPRIGHT = 0.7
 MAX_SETTLED_SPEED = 0.06
 MAX_SETTLED_YAW_SPEED = 0.1
-
-
-@dataclass(frozen=True)
-class PushRewardWeights:
-    """押す動作のチーム報酬係数。時間・接触のペナルティはdtに比例する。"""
-
-    progress: float = 8.0
-    approach: float = 0.5
-    command_change: float = 0.01
-    time: float = 0.01
-    robot_contact: float = 0.5
-    success: float = 20.0
-    failure: float = -10.0
-
-
-REWARD_WEIGHTS = PushRewardWeights()
 
 
 class PushEnv:
@@ -348,24 +331,27 @@ class PushEnv:
         physics_steps = PHYSICS_STEPS * self.cfg.high_level_decimation
         approach = self._mean_approach_distance()
         if info["success"]:
-            terminal_reward = REWARD_WEIGHTS.success
+            terminal_reward = self.cfg.reward_weights.success
         elif info["failed"]:
-            terminal_reward = REWARD_WEIGHTS.failure
+            terminal_reward = self.cfg.reward_weights.failure
         else:
             terminal_reward = 0.0
         terms = {
-            "progress": REWARD_WEIGHTS.progress
+            "progress": self.cfg.reward_weights.progress
             * (before["distance"] - info["distance"]),
-            "orientation": before["yaw_error"] - info["yaw_error"],
-            "approach": REWARD_WEIGHTS.approach * (previous_approach - approach),
-            "command_change": -REWARD_WEIGHTS.command_change
+            "orientation": self.cfg.reward_weights.orientation
+            * (before["yaw_error"] - info["yaw_error"]),
+            "approach": self.cfg.reward_weights.approach
+            * (previous_approach - approach),
+            "command_change": -self.cfg.reward_weights.command_change
             * float(np.mean(((commands - self.last_commands) / COMMAND_LIMIT) ** 2)),
-            "time": -REWARD_WEIGHTS.time * self.cfg.dt,
-            "collision": -REWARD_WEIGHTS.robot_contact
+            "time": -self.cfg.reward_weights.time * self.cfg.dt,
+            "collision": -self.cfg.reward_weights.robot_contact
             * self.cfg.dt
             * self.contacts.robot_collision_steps
             / physics_steps,
-            "body_cargo_contact": -self.cfg.dt
+            "body_cargo_contact": -self.cfg.reward_weights.body_contact
+            * self.cfg.dt
             * float(self.contacts.part_contact_counts[BODY].mean())
             / physics_steps,
             "terminal": terminal_reward,

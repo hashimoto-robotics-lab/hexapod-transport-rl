@@ -122,6 +122,7 @@ def train_approach(
     output: str | Path,
     pushing_checkpoint: str | Path,
     *,
+    config: ApproachConfig | None = None,
     iterations: int = 700,
     num_envs: int = 8,
     horizon: int = 64,
@@ -132,7 +133,11 @@ def train_approach(
     resume: str | Path | None = None,
     asset_root: str | Path | None = None,
 ) -> Path:
-    """初期化 → 環境準備 → 経験収集/PPO更新 → 検証/難度変更 → 保存。"""
+    """Learn from this config's reward/reset settings, saving the final actor.
+
+    Layout follows the near/rear/side/front curriculum. Passing config on resume
+    requires the same reward/reset settings; omitting it restores saved settings.
+    """
     # 1. 設定・乱数・学習開始位置を準備する。
     if min(iterations, num_envs, horizon, epochs, minibatch, validate_every) < 1:
         raise ValueError("Training sizes must be positive")
@@ -147,7 +152,8 @@ def train_approach(
     _, push_saved = load_checkpoint(pushing_checkpoint)
     if push_saved["config"]["shape"] != "T" or push_saved["config"]["num_robots"] != 2:
         raise ValueError("Expected the two-robot T pushing checkpoint")
-    config = ApproachConfig(layout="near", easier_reset_fraction=0.25)
+    requested_config = config
+    config = config or ApproachConfig(layout="near", easier_reset_fraction=0.25)
     navigator, optimizer, resumed_state = _initialize_navigator(
         pushing_checkpoint, resume
     )
@@ -156,7 +162,15 @@ def train_approach(
         start_iteration = resumed_state["iteration"]
         transitions = resumed_state["transitions"]
         curriculum_level = resumed_state["curriculum_level"]
-        config = ApproachConfig(**resumed_state["approach_config"])
+        saved_config = ApproachConfig(**resumed_state["approach_config"])
+        if (
+            requested_config is not None
+            and replace(requested_config, layout=saved_config.layout) != saved_config
+        ):
+            raise ValueError(
+                "Resume reward/reset settings differ from saved experiment"
+            )
+        config = saved_config
     config = replace(config, layout=CURRICULUM_LAYOUTS[curriculum_level])
     started = time.perf_counter()
     # 2. 学習用と検証用の世界を別々に準備する。

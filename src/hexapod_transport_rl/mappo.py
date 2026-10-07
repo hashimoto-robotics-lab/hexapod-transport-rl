@@ -7,7 +7,7 @@ in separate processes; the parent performs shared actor/critic updates.
 import json
 import time
 from contextlib import closing
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -445,6 +445,7 @@ def train_rollouts(
     started_at: float,
     mirror_equivariant: bool = False,
     initial_log_std: float | None = None,
+    allow_reward_change: bool = False,
 ) -> Path:
     """押す学習の共通ループ。初期化、経験収集、PPO更新、指標・重みの保存。"""
     obs, _ = envs.reset(seed=seed)
@@ -459,8 +460,11 @@ def train_rollouts(
     transitions = 0
     if resume:
         agent, saved = load_checkpoint(resume)
+        saved_config = PushConfig(**saved["config"])
+        if allow_reward_change:
+            saved_config = replace(saved_config, reward_weights=cfg.reward_weights)
         if (
-            saved["config"] != asdict(cfg)
+            saved_config != cfg
             or saved["low_level_sha256"] != provenance["low_level_sha256"]
             or saved["robot_xml_sha256"] != provenance["robot_xml_sha256"]
         ):
@@ -496,6 +500,7 @@ def train_rollouts(
         resume=str(resume) if resume else None,
         mirror_equivariant=agent.mirror_equivariant,
         initial_log_std=initial_log_std,
+        allow_reward_change=allow_reward_change,
     )
     if "reset_distribution" in provenance:
         run["reset_distribution"] = provenance["reset_distribution"]

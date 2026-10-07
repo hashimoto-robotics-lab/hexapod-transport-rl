@@ -186,8 +186,8 @@ class HexapodPushEnv(gym.Env):
         # Include robots behind the cargo as well as the goal, even at reset.
         camera.distance = max(
             6.0,
-            self.config.goal_distance + self.config.depth + 2,
-            self.config.width + 3,
+            self.core.cfg.goal_distance + self.core.cfg.depth + 2,
+            self.core.cfg.width + 3,
         )
         camera.azimuth, camera.elevation = 135, -50
 

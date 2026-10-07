@@ -3,40 +3,43 @@
 歩行コマンドの使い方は [APIガイド](api.md) を参照してください。`walking.py` が学生向けの操作、
 `locomotion.py` が歩行と運搬で共通の固定モデル・モーター制御です。
 
-運搬の学習を読むときは、以下の5ファイルを読むと、研究で変更する箇所と学習の流れを追えます。
+運搬の学習では、まず環境と報酬の2ファイルを読み、次に学習・評価を追います。
 
 | 順番 | ファイル | 読む内容 |
 |---|---|---|
-| 1 | `src/hexapod_transport_rl/approach.py` | 回り込みの観測、初期配置、報酬、整列条件 |
-| 2 | `src/hexapod_transport_rl/env.py` | 押す動作の観測・報酬・成功判定と物理シミュレーション |
-| 3 | `src/hexapod_transport_rl/mappo.py` | 共通の共有actor・中央critic、経験収集、GAE、PPO更新 |
-| 4 | `src/hexapod_transport_rl/approach_training.py` | 回り込みのカリキュラム、検証、保存・再開 |
-| 5 | `src/hexapod_transport_rl/approach_evaluation.py` | 2つの方策の切り替え、運搬全体の評価と録画 |
+| 1 | `src/hexapod_transport_rl/approach.py` | 回り込みの観測・行動、初期配置、整列条件 |
+| 2 | `src/hexapod_transport_rl/rewards.py` | 報酬係数と、実際に学習で使う回り込み報酬の式 |
+| 3 | `src/hexapod_transport_rl/env.py` | 押す動作の観測・報酬・成功判定と物理シミュレーション |
+| 4 | `src/hexapod_transport_rl/mappo.py` | 共有actor・中央critic、経験収集、GAE、PPO更新 |
+| 5 | `src/hexapod_transport_rl/approach_training.py` | 回り込みのカリキュラム、検証、保存・再開 |
+| 6 | `src/hexapod_transport_rl/approach_evaluation.py` | 方策の切り替え、運搬全体の評価と録画 |
 
 ## 研究で変更する場所
 
 | 変更したい内容 | 最初に見る定義 |
 |---|---|
-| 回り込みの報酬 | `approach.py` の `ApproachRewardWeights` と `_approach_reward()` |
-| 押す動作の報酬 | `env.py` の `PushRewardWeights` と `_reward_terms()` |
+| 回り込みの報酬 | `rewards.py` の `ApproachRewardWeights` と `approach_reward_terms()` |
+| 押す動作の報酬 | `rewards.py` の `PushRewardWeights` と `env.py` の `_reward_terms()` |
 | 初期配置 | `approach.py` の `ApproachConfig` と `_sample_start_pose()` |
 | 回り込みから押す動作へ移る条件 | `approach.py` の `HANDOVER_*` と `approach_ready()` |
 | 学習率・PPOのclip幅・各損失の係数 | `mappo.py` の `PPOSettings` |
 | 初期配置の難度を上げる条件 | `approach_training.py` の `ADVANCE_SUCCESS_RATE` と `MIN_PHASE_ITERATIONS` |
 
-設定の値は従来の成功した学習と同じです。係数の定義を変えた後は、新しいプロセスで学習を起動してください。
+既定値は従来の成功した学習と同じです。係数は各環境の設定に渡し、保存モデルにも記録します。
+関数の式を編集した場合は新しいランタイム・新しい実験名で学習します。
 `PPOSettings` は回り込みと押す学習で共通です。保存モデルの層数・重み名・観測順は従来の形式を保っています。
 
-## Colabの補助API
+## 学生の比較実験
 
-学生用ノートブックは `ColabLesson` の呼び出しで学習・評価・保存を表します。
-`tools/colab_runtime.py` はセルで直接importするライブラリと専用の学習Pythonの準備、CLIの別プロセス起動、設定の検証、
-コミット・ソースの記録、途中保存・再開、動画表示を担当します。
-`tools/colab_analysis.py` は学習ログから図と評価表を生成します。
-MAPPOや報酬の定義は従来どおり `src/` にあり、補助APIに学習アルゴリズムは実装していません。
+学生用ノートブックは、環境操作・報酬設定・`train_approach()`・`evaluate_transport()` を
+通常のPythonコードで直接呼び出します。報酬は `ApproachConfig(reward_weights=...)` へ渡します。
+`ApproachEnv.step()` は `rewards.py` の関数を使い、返した報酬と同じ内訳を `info["reward_terms"]` に格納します。
 
-手順や学生への説明を変えるときは `tools/build_colab.py` を編集し、
-`uv run python tools/build_colab.py` でノートブックを再生成してください。
+`tools/colab_runtime.py` はアクティブなカーネルへのインストールと描画設定だけを担当します。
+`experiments.py` の2関数は実験ソース・資産・版の保存とZIP作成だけを担当します。
+学習・集計・図・mediapy動画表示はノートブックのセルに残しています。
+手順や説明を変えるときは `tools/build_colab.py` を編集し、
+`uv run python tools/build_colab.py` で再生成してください。
 
 ## 実行の流れ
 
@@ -98,7 +101,8 @@ actorとcriticは128ユニット×2層のMLP、行動は正規分布からサン
 
 ## 初期の押す方策から研究したい場合
 
-通常は同梱した `checkpoints/base_pusher.pt` を使います。
+初期の押す方策から研究する場合は `checkpoints/base_pusher.pt` を使います。
+学生の回り込み報酬の比較では、適応済み `pusher.pt` を両条件で固定します。
 初期の押す方策も新たに学習するときだけ `train-push` を使います。
 
 ```bash

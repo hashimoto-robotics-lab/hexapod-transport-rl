@@ -12,6 +12,7 @@ dependencies = [
     "gymnasium>=1.2,<2",
     "matplotlib>=3.9,<4",
     "mediapy>=1.2,<2",
+    "pandas>=2.2,<4",
 ]
 
 [project.scripts]

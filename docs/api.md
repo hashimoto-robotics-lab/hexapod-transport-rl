@@ -132,3 +132,29 @@ reset前に最終観測から価値を計算する処理は `mappo.py` に共通
 別プロセスを使う自作スクリプトでは `if __name__ == "__main__":` で起動処理を囲み、最後に `close()` を呼んでください。
 `HexapodPushEnv(render_mode="rgb_array")` はRGB画像、`render_mode="human"` はGUIを提供します。
 運搬全体の25 fps録画は `./run.sh eval --video-dir ... --episodes 1` を使ってください。
+
+## 報酬の比較実験API
+
+```python
+from dataclasses import replace
+from hexapod_transport_rl import ApproachEnv, ApproachConfig, ApproachRewardWeights
+
+reward = replace(ApproachRewardWeights(), robot_contact=12.0)
+config = ApproachConfig(layout="front", reward_weights=reward)
+with ApproachEnv(config, render_mode="rgb_array") as env:
+    observation, info = env.reset(seed=80000)
+    observation, reward, terminated, truncated, info = env.step(env.action_space.sample())
+    terms = info["reward_terms"]  # 合計がこのstepのチーム報酬
+    frame = env.render()
+```
+
+回り込みの観測は `(2, 10)`、行動は `(2, 3)` の−1〜1です。
+担当する左右の役割を反転した座標で行動を出し、内部で実際の機体速度へ戻します。
+中央critic用の `env.state()` は両機の観測を並べた `(20,)` です。
+`train_approach(config=config, ...)` へ同じ設定を渡すと、並列環境もその報酬で学習し、
+係数をcheckpointへ保存します。既存モデルの読み込みは従来の既定値を補います。
+式は `rewards.approach_reward_terms()`、押す報酬は `PushConfig(reward_weights=PushRewardWeights(...))` で設定します。
+
+`evaluate_transport(checkpoint=..., output=..., episodes=..., seed=..., layout=...)` は
+回り込みから押すまでを評価し、物理的な成功・接触・転倒・誤差をJSONに保存して辞書を返します。
+異なる報酬の実験同士を比較するときは、総報酬ではなくこれらの指標を使います。

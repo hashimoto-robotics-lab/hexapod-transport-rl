@@ -4,7 +4,7 @@ Only reset edits poses. Actors learn from reward, without demonstration actions.
 Deployed actors receive geometry/velocity observations and choose all velocities.
 """
 
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 import gymnasium as gym
@@ -12,8 +12,10 @@ import mujoco
 import numpy as np
 from gymnasium import spaces
 
+from .api import HexapodPushEnv
 from .config import COMMAND_LIMIT, STAND_HEIGHT, PushConfig, rotation, wrap
 from .env import PushEnv
+from .rewards import ApproachRewardWeights, approach_reward_terms
 from .types import FloatArray, Info, Observation, ResetResult, StepResult
 
 SIDES = np.array([-1, 1])  # robot_0は右側、robot_1は左側を担当する。
@@ -33,22 +35,6 @@ CLEARANCE_UPPER = np.array([0.55, 1.05])
 
 
 @dataclass(frozen=True)
-class ApproachRewardWeights:
-    """回り込み報酬の係数。報酬設計の実験ではここを変更する。"""
-
-    progress: float = 6.0
-    time: float = 0.04
-    robot_contact: float = 4.0
-    body_contact: float = 6.0
-    cargo_displacement: float = 0.1
-    success: float = 15.0
-    failure: float = -10.0
-
-
-REWARD_WEIGHTS = ApproachRewardWeights()
-
-
-@dataclass(frozen=True)
 class ApproachConfig:
     """回り込みの初期配置と制限時間。角度はdegrees/radiansの区別に注意。"""
 
@@ -58,8 +44,13 @@ class ApproachConfig:
     yaw_jitter: float = 0.15
     layout: str = "mixed"
     easier_reset_fraction: float = 0.0
+    reward_weights: ApproachRewardWeights = field(default_factory=ApproachRewardWeights)
 
     def __post_init__(self) -> None:
+        if isinstance(self.reward_weights, dict):
+            object.__setattr__(
+                self, "reward_weights", ApproachRewardWeights(**self.reward_weights)
+            )
         if self.layout not in ("near", "front", "side", "rear", "mixed"):
             raise ValueError("Unknown approach layout")
         values = (
@@ -247,57 +238,34 @@ def _sample_start_pose(
     return np.array([-1.25, 0.325 * side]), rng.uniform(-0.2, 0.2)
 
 
-def _approach_reward(
-    env: PushEnv, previous_potential: float, info: Info, success: bool
-) -> float:
-    """前後の状態から、進捗報酬と各ペナルティを同じ順序で合算する。"""
-    progress_reward = REWARD_WEIGHTS.progress * (
-        route_potential(env) - previous_potential
-    )
-    time_penalty = REWARD_WEIGHTS.time * env.cfg.dt
-    robot_contact_penalty = (
-        REWARD_WEIGHTS.robot_contact * env.cfg.dt * info["robot_collision_fraction"]
-    )
-    body_contact_penalty = (
-        REWARD_WEIGHTS.body_contact
-        * env.cfg.dt
-        * np.mean(info["body_contact_fraction"])
-    )
-    displacement_penalty = (
-        REWARD_WEIGHTS.cargo_displacement * info["cargo_displacement"]
-    )
-    if success:
-        terminal_reward = REWARD_WEIGHTS.success
-    elif info["failed"]:
-        terminal_reward = REWARD_WEIGHTS.failure
-    else:
-        terminal_reward = 0.0
-    return float(
-        progress_reward
-        - time_penalty
-        - robot_contact_penalty
-        - body_contact_penalty
-        - displacement_penalty
-        + terminal_reward
-    )
-
-
-class ApproachEnv(gym.Env):
+class ApproachEnv(HexapodPushEnv):
     """Navigation-only MARL task: finish when both robots can start pushing.
 
     Stopping at handover avoids repeatedly simulating the already learned push.
     The physical time step and foot-contact model match the original task.
     """
 
-    metadata = {"render_modes": []}
+    metadata = {"render_modes": ["rgb_array"], "render_fps": 5}
 
     def __init__(
-        self, config: ApproachConfig | None = None, asset_root: str | Path | None = None
+        self,
+        config: ApproachConfig | None = None,
+        asset_root: str | Path | None = None,
+        *,
+        render_mode: str | None = None,
+        width: int = 640,
+        height: int = 480,
     ) -> None:
-        self.config = config or ApproachConfig()
-        self.core = PushEnv(
-            PushConfig(shape="T", episode_seconds=self.config.seconds), asset_root
+        approach_config = config or ApproachConfig()
+        super().__init__(
+            PushConfig(shape="T", episode_seconds=approach_config.seconds),
+            asset_root,
+            render_mode=render_mode,
+            width=width,
+            height=height,
         )
+        self.config = approach_config
+        self.state_space = spaces.Box(-np.inf, np.inf, (2 * OBS_DIM,), np.float32)
         self.observation_space = spaces.Box(-np.inf, np.inf, (2, OBS_DIM), np.float32)
         self.action_space = spaces.Box(-1, 1, (2, 3), np.float32)
         self.ready_steps = 0
@@ -315,15 +283,21 @@ class ApproachEnv(gym.Env):
         self.config = replace(self.config, layout=layout)
 
     def reset(self, *, seed=None, options=None) -> ResetResult:
-        super().reset(seed=seed)
-        if seed is not None:
-            self.core.rng = np.random.default_rng(seed)
+        if self._closed:
+            raise RuntimeError("Environment is closed; create a new instance")
+        gym.Env.reset(self, seed=seed)
+        self.core.rng = self.np_random
+        self._has_reset = True
+        self._episode_return = 0.0
         self.ready_steps = 0
         obs = reset_approach(self.core, self.config)
         return obs, {"is_success": False}
 
     def step(self, action: FloatArray) -> StepResult:
         """行動の検証 → 物理更新 → 整列判定 → 報酬 → 終了判定。"""
+        self._require_ready()
+        if self.core.done:
+            raise gym.error.ResetNeeded("Episode ended; call reset() before step()")
         if not self.action_space.contains(np.asarray(action, dtype=np.float32)):
             raise ValueError("Expected canonical actions (2,3) in [-1,1]")
         previous_potential = route_potential(self.core)
@@ -331,8 +305,18 @@ class ApproachEnv(gym.Env):
         ready = bool(approach_ready(self.core).all())
         self.ready_steps = self.ready_steps + 1 if ready else 0
         success = self.ready_steps >= HANDOVER_HOLD_STEPS and not info["failed"]
-        reward = _approach_reward(self.core, previous_potential, info, success)
-        terminated = bool(terminated or success)
+        terms = approach_reward_terms(
+            self.config.reward_weights,
+            progress=route_potential(self.core) - previous_potential,
+            dt=self.core.cfg.dt,
+            robot_contact=float(info["robot_collision_fraction"]),
+            body_contact=float(np.mean(info["body_contact_fraction"])),
+            cargo_displacement=float(info["cargo_displacement"]),
+            success=success,
+            failed=bool(info["failed"]),
+        )
+        reward = sum(terms.values())
+        terminated = bool(info["failed"] or success)
         limit = min(
             self.config.seconds,
             LAYOUT_TIME_LIMITS[self.core.approach_layout],
@@ -342,8 +326,20 @@ class ApproachEnv(gym.Env):
             and not terminated
         )
         self.core.done = terminated or truncated
-        info.update(is_success=success, approach_success=success)
+        self._episode_return += reward
+        info.update(
+            is_success=success,
+            approach_success=success,
+            reward_terms=terms,
+            team_reward=reward,
+            episode_return=self._episode_return,
+        )
         return observe_approach(self.core), float(reward), terminated, truncated, info
+
+    def state(self) -> Observation:
+        """Central critic receives both navigation observations."""
+        self._require_ready()
+        return observe_approach(self.core).reshape(-1).copy()
 
 
 def worker_env(

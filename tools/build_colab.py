@@ -1,88 +1,50 @@
-"""Build the student lesson; infrastructure lives in colab_runtime.py."""
+"""Build the research notebook from its readable cell definitions."""
 
 import json
-import textwrap
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUT = ROOT / "notebooks/hexapod_transport_rl_colab.ipynb"
-REPOSITORY = "hashimoto-robotics-lab/hexapod-transport-rl"
 
+CELLS = [
+    (
+        "markdown",
+        r"""# 六足ロボットの協調運搬：報酬設計と比較実験
 
-def main():
-    cells = []
+## 研究のモチベーション
+複数のロボットで物資を運ぶには、荷物の周囲での移動、押す向き、相手との接触を考える必要があります。
+この研究では、**六足ロボットがT字物体に回り込み、脚を当てて目標へ押す協調動作**を強化学習します。
+機体の色は元のロボットと同じ、床にはグリッドを表示します。胴体に押すための突っ張りは追加しません。
 
-    def markdown(source):
-        cells.append(
-            {
-                "cell_type": "markdown",
-                "metadata": {},
-                "source": textwrap.dedent(source).strip() + "\n",
-            }
-        )
+このノートブックの目的は、研究の仕組みとAPIを理解し、**報酬を変えると挙動がどう変わるかを検証すること**です。
+研究の問いの例：「機体同士の接触ペナルティを強くすると、安全に回り込めるか。それとも動かなくなるか？」
 
-    def code(source):
-        cells.append(
-            {
-                "cell_type": "code",
-                "metadata": {},
-                "source": textwrap.dedent(source).strip() + "\n",
-                "outputs": [],
-                "execution_count": None,
-            }
-        )
-
-    markdown(r"""
-# 六足ロボットの協調物資運搬
-
-## なぜこの研究をするのか
-
-複数のロボットで荷物を押すには、荷物の周囲で移動する位置、押す向き、
-相手に合わせるタイミングを決める必要があります。
-この研究では、**2台の六足ロボットがT字物体を回り込み、脚で目標位置まで押す協調動作**を学習します。
-接触や初期位置によって必要な指令が変わるため、試行した結果を報酬として返し、
-状況に合った指令を学ぶ強化学習を使います。
-まず平坦な床のシミュレーションで、どの初期配置から成功し、どんな条件で失敗するかを調べます。
-
-研究で確かめたい問いは、次の3つです。
-
-- 前方や側方から始めても、荷物を避けて押す位置へ回り込めるか。
-- 2台が荷物の位置と向きを合わせながら、目標まで運べるか。
-- 報酬や学習量、初期配置を変えると、成功率や接触・転倒はどう変わるか。
-
-## 出発点：六足ロボットは、すでに歩行を学習している
-
-この教材には、**速度コマンドを受け取り、18関節を動かす学習済み歩行モデル**が入っています。
-前進・横移動・旋回の目標速度を送ると、ロボットが脚を動かします。
-最初はこのモデルを読み込んで、指令を変えるだけで動かせることを動画で確かめましょう。
+## 学習済みロボットへコマンドを送るところから始める
+歩行モデルはすでに学習済みです。前後・左右・旋回の速度指令を受け取り、18関節の目標角度を出します。
+この歩行モデルは固定し、上位方策が各ロボットへ送る速度指令を学習します。
 
 ```text
-速度コマンド [前後速度, 左右速度, 旋回速度]
-                   ↓
-         学習済み歩行モデル（固定）
-                   ↓
-           18関節の目標角度
-                   ↓
-          モーター・脚・床の接触
-                   ↓
-             ロボットが移動
+Tとロボットの状態 → 上位方策 → 各機の速度指令 → 固定した歩行モデル → 脚・床・Tの接触
+        ↑                                                        ↓
+        └──────────────── 次の状態とチーム報酬 ────────────────────┘
 ```
 
-その後、**荷物と相手の状態から、各機へ送る速度コマンドを決める運搬方策**を強化学習します。
-歩行モデルは固定したままです。運搬方策にはチームの報酬を使い、デモを教師には使いません。
+上位方策にはMAPPO（共有actor・中央critic）を使います。デモを教師にせず、報酬から学びます。
+まず2台で報酬の比較実験を行います。歩行APIは1〜4台、押す環境は2〜4台に対応しますが、
+**この回り込みカリキュラムと同梱の運搬モデルは2台用**です。4台の運搬性能は、別途環境拡張と学習で検証します。
 
-**上から順に実行**してください。
-研究の動機 → 準備 → コマンドで歩行を体験 → 協調運搬の学習 → 評価・動画 → 保存、の順に進みます。
-学習は最初に `quick` で一巡し、その後 `research` で本学習に進みます。
-""")
-    markdown(r"""
-## Step 1 — GitHubから教材を取得する
-
-公開リポジトリからコード・ロボット形状・学習済みモデルを取得します。
-**GitHubへのログインやアクセストークンは不要**です。このセルはそのまま実行してください。
-""")
-    code(r"""
-from pathlib import Path
+上から順に、準備 → 歩行API → 強化学習環境API → 報酬 → 比較学習 → 定量評価・動画、を実行してください。
+""",
+    ),
+    (
+        "markdown",
+        r"""## 1. 教材と実行環境を準備する
+公開GitHubから取得します。認証は不要です。次の2セルはそのまま実行します。
+既に取得したコードがある場合は、学生の編集を残すため再取得しません。新しい教材を使うときは新規ランタイムで始めます。
+""",
+    ),
+    (
+        "code",
+        r"""from pathlib import Path
 import subprocess
 import sys
 
@@ -93,51 +55,36 @@ if not PROJECT_DIR.exists():
         "https://github.com/hashimoto-robotics-lab/hexapod-transport-rl.git", str(PROJECT_DIR)
     ], check=True)
 sys.path.insert(0, str(PROJECT_DIR / "tools"))
-""")
-    markdown(r"""
-## Step 2 — 実行環境を準備する
+""",
+    ),
+    (
+        "code",
+        r"""from colab_runtime import prepare_colab
 
-準備用APIが、Colabで直接importできるライブラリと動画の描画環境を用意します。
-歩行と環境APIはセル内で実行し、並列学習は内部で専用環境を使います。
-このセルもそのまま実行してください。以降の `lesson` は学習・評価・保存を実行する補助APIです。
-ロボットの操作には、次の `WalkingSimulation` を使います。
-""")
-    code(r"""
-from colab_runtime import ColabLesson
+prepare_colab(PROJECT_DIR)
+""",
+    ),
+    (
+        "markdown",
+        r"""## 2. 学習済みの1台に速度コマンドを送る
+`WalkingSimulation` は床とロボットを用意するAPIです。このセルでは学習を行いません。
+`set_velocity()` は機体座標の目標速度を設定し、`run_for()` はその指令で時間を進めます。
+省略した速度成分はゼロになり、設定した指令は次の変更まで続きます。
 
-lesson = ColabLesson(PROJECT_DIR)
-""")
-    markdown(r"""
-## Step 3 — 学習済みロボットにコマンドを送る
-
-`WalkingSimulation` は、**床と指定した台数のロボットだけ**を用意する歩行用APIです。
-新しい学習は行いません。まず1台にコマンドを送り、歩行を動画で確かめます。
-
-- `set_velocity(robot_id=0, vx=0.12)`：0番のロボットの前進指令を0.12 m/sにする。
-- `run_for(seconds=3.0)`：全機を、現在の指令で同時に3秒間動かす。
-- `stop()`：全機にゼロ速度を指令する。実際の減速を観察するには、その後も時間を進める。
-
-指令は、次に変更するまで続きます。`set_velocity()` で省略した速度成分はゼロになります。
-`robot_id` は0から始まります。`vx`・`vy` は機体座標の速度、`yaw_rate` は旋回速度です。
-指令は目標速度なので、実際の動きには姿勢や接触による差が出ます。
-
-| 引数 | 単位 | 指定できる範囲 | 正の値の意味 |
+| 引数 | 単位 | 範囲 | 正の方向 |
 |---|---|---|---|
 | `vx` | m/s | −0.15〜0.20 | 前進 |
 | `vy` | m/s | −0.10〜0.10 | 左移動 |
 | `yaw_rate` | rad/s | −0.60〜0.60 | 左旋回 |
 
-下のAPI呼び出しを1つ変えて再実行し、動きの違いを確かめてください。
-`record=True` は描画したRGB画像を5 fpsで記録します。`sim.frames` が画像の配列です。
-`with` を抜けて描画資源を解放した後、`media.show_video(sim.frames, fps=5)` で動画を表示します。
-表示方法は [MuJoCo公式チュートリアル](https://github.com/google-deepmind/mujoco/blob/main/python/tutorial.ipynb) と同じmediapyを使います。
-通常のPythonコードとして実行します。
-セルに分けて動かす場合は `sim = WalkingSimulation(...)` で生成し、最後に `sim.close()` を呼びます。
-**最初は `set_velocity()` の速度と `run_for()` の時間を変更してみましょう。**
-`run_for()` の時間は、歩行制御周期の0.04秒刻みで指定します。
-""")
-    code(r"""
-import mediapy as media
+まず速度を1つ変え、実際の移動を観察してください。目標速度と実速度には接触や姿勢による差があります。
+`run_for()` の時間は0.04秒刻みです。`record=True` でRGB画像を5 fpsで集めます。
+[MuJoCo公式チュートリアル](https://github.com/google-deepmind/mujoco/blob/main/python/tutorial.ipynb) と同じように、mediapyで表示します。
+""",
+    ),
+    (
+        "code",
+        r"""import mediapy as media
 from hexapod_transport_rl import WalkingSimulation
 
 with WalkingSimulation(num_robots=1, record=True) as sim:
@@ -160,17 +107,19 @@ with WalkingSimulation(num_robots=1, record=True) as sim:
     sim.run_for(seconds=0.8)
 
 media.show_video(sim.frames, fps=5)
-""")
-    markdown(r"""
-### 同じAPIで4台を動かす
-
-`num_robots=4` とし、0〜3番へ別々の指令を設定します。
-**指令の設定だけでは時間は進みません。** `run_for()` で4台が同時に動きます。
-2番には前進と左移動を同時に指令します。固定歩行モデルは、停止から横移動だけを始めると速度の追従が弱い場合があります。
-ここでも学習は行わず、荷物はありません。4台の協調運搬を学習する環境は、今後拡張する研究課題です。
-""")
-    code(r"""
-from hexapod_transport_rl import WalkingSimulation
+""",
+    ),
+    (
+        "markdown",
+        r"""## 3. 複数台に独立したコマンドを送る
+`robot_id` は0から始まります。全機の物理シミュレーションを同時に進めます。
+同じ歩行モデルを各機が使っていても、送る速度を変えると別々に動きます。
+ここでの指令は手で指定しています。後の学習では上位方策が指令を決めます。
+""",
+    ),
+    (
+        "code",
+        r"""from hexapod_transport_rl import WalkingSimulation
 
 with WalkingSimulation(num_robots=4, record=True) as sim:
     sim.run_for(seconds=0.8)
@@ -185,183 +134,371 @@ with WalkingSimulation(num_robots=4, record=True) as sim:
     sim.run_for(seconds=0.8)
 
 media.show_video(sim.frames, fps=5)
-""")
-    markdown(r"""
-## 歩行コマンドから協調運搬へ
+""",
+    ),
+    (
+        "markdown",
+        r"""## 4. 強化学習環境のAPIを理解する
+運搬を「押す開始位置までの回り込み」と「目標まで押す」の2段階に分けています。
+この比較実験では**回り込みを学習し、押す方策は全条件で同じ学習済みモデルに固定**します。
+これにより、回り込み報酬を変えた影響を調べます。
 
-今は私たちが速度コマンドを指定しました。ここからは、**荷物・目標・相手の状態を観測して、
-2台それぞれのコマンドを運搬方策が決める**ようにします。
+| 環境 | 観測の形 | 行動の形 | 成功条件 |
+|---|---|---|---|
+| `ApproachEnv` | `(2, 10)` | `(2, 3)` | 両機が担当する押す位置・向きに整列 |
+| `HexapodPushEnv(flatten=False)` | `(台数, 20)` | `(台数, 3)` | Tの位置・向きが目標の許容範囲内 |
 
-```text
-荷物・目標・相手の状態 → 運搬方策（今回MAPPOで学習）
-                                 ↓ 各機の速度コマンド
-                        歩行モデル（学習済み・固定）
-                                 ↓ 関節の動作
-                          2台とT字物体の接触・移動
-                                 ↓ チーム報酬
-                           運搬方策を更新
-```
+回り込みの各機の観測10成分は、T基準の位置2、向きのsin/cos 2、機体速度3、前回指令3です。
+担当する左右の位置を同じ役割として扱うため、左右方向を反転して共有actorへ入力します。
+回り込みの行動もこの反転座標の `[前後, 左右, 旋回]` で、各成分は−1〜1です。
+環境内部で各機の実際の方向に戻し、歩行APIと同じ物理速度の範囲へ変換します。
 
-歩行体験で指定したコマンドは、運搬学習の教師には使いません。
-次の工程では、環境APIの観測・行動・報酬を確認し、参考の運搬方策を再生してから、自分の運搬方策を学習します。
-""")
-    markdown(r"""
-## Step 4 — 実験を設定する
+`reset(seed=...)` が初期状態を作り、`step(action)` が0.2秒進めます。
+戻り値は次の観測・チーム報酬・終了・時間切れ・診断情報です。終了後は `reset()` します。
+`info["reward_terms"]` は**このステップで実際に返した報酬の内訳**です。
+""",
+    ),
+    (
+        "code",
+        r"""import numpy as np
+from hexapod_transport_rl import ApproachEnv, ApproachConfig
 
-まず `mode="quick"` で全工程を確認し、次に `mode="research"` で本学習します。
-**quickの数回の更新による成功率を、卒論の性能として扱わないでください。**
-researchでは回り込み409,600、押す方策の適応153,600チームステップを目安に学習します。
-
-- `name`：結果を保存する実験名。条件を変えるときは、新しい名前にします。
-- `num_envs`：経験を集める独立した世界数。1世界には2台のロボットがいます。
-- `seed`：学習の乱数seed。複数回の比較実験ではこの値を変えます。
-- `start_from_scratch`：Trueなら上位の押す方策も新規学習します。歩行モデルはどちらでも固定します。
-
-設定・教材の版・実行コードは自動で記録されます。同じ設定で再実行すると、保存済みの続きから学習します。
-""")
-    code(r"""
-lesson.configure(
-    name="trial_01",
-    mode="quick",
-    num_envs=2,
-    seed=20261006,
-    start_from_scratch=False,
-)
-""")
-    markdown(r"""
-## Step 5 — 環境APIを確認する
-2台の局所観測は `(2,20)`、各機の行動は `[前後, 左右, 旋回]` の `(2,3)` です。
-1 stepは0.2秒。1つのMuJoCo世界に2台とTがあり、報酬はチームで共有します。
-""")
-    code(r"""
-import numpy as np
-from hexapod_transport_rl import HexapodPushEnv, PushConfig
-
-with HexapodPushEnv(PushConfig(shape="T"), flatten=False) as env:
-    observation, info = env.reset(seed=42)
+with ApproachEnv(ApproachConfig(layout="front"), render_mode="rgb_array") as env:
+    observation, info = env.reset(seed=80000)
+    print("観測:", observation.shape, "行動:", env.action_space.shape)
     action = np.zeros((2, 3), dtype=np.float32)
-    next_observation, reward, terminated, truncated, info = env.step(action)
-    print("観測の形:", observation.shape)
-    print("行動の形:", action.shape)
+    observation, reward, terminated, truncated, info = env.step(action)
     print("チーム報酬:", reward)
+    print("内訳:", info["reward_terms"])
     print("終了:", terminated, "時間切れ:", truncated)
-    print("報酬の内訳:", info["reward_terms"])
-""")
-    markdown(r"""
-## Step 6 — 参考の学習済みモデルを再生する
-これは事前に**報酬だけで学習した参考方策**です。次の学習の教師データには使用しません。
-同じseedで実際にMuJoCoを動かし、動画を生成します。モデルを読み込むだけの静止画ではありません。
-640×480、5 fpsで影・反射を省いて描画し、物理更新は200 Hzを保ちます。
-""")
-    code(r"""
-lesson.show_reference()
-""")
-    markdown(r"""
-## Step 7 — 初期の押す方策を準備する
-`start_from_scratch=False` では、報酬で学習済みの押す方策を利用します。
-`True` では、押す方策をランダムな重みから学習した後、左右対称化と探索幅の調整を適用して追加学習します。
-歩行方策は固定です。両方の方法でデモ行動や模倣損失は使いません。
-""")
-    code(r"""
-pusher = lesson.prepare_pusher()
-""")
-    markdown(r"""
-## Step 8 — 回り込みを学習する
-actorをランダムな重みからMAPPOで学習します。初期配置は `near → rear → side → front`。
-検証成功率が75%以上かつ一定の反復数を経過すると、次の難度へ進みます。
-報酬はTを避けて後方へ向かう距離の減少、接触、時間などから計算します。距離計算は行動の教師には使いません。
-両機が後方の担当位置と向きに整列した時点で、回り込みのエピソードを終了します。
-""")
-    code(r"""
-navigator = lesson.train_navigation(pusher)
-""")
-    markdown(r"""
-## Step 9 — 回り込み後の位置から押す動作を学習する
-回り込み完了位置のばらつきに適応する追加のMAPPOです。
-毎回の学習で回り込みを再生せず、その完了位置付近から始めて経験を集めます。
-初期配置の25%には、元の押す学習の配置も残します。
-""")
-    code(r"""
-adapted_pusher = lesson.train_handover(pusher)
-""")
-    markdown(r"""
-## Step 10 — 検証用の初期配置でモデルを選ぶ
-回り込みの最終モデルと、保存されていれば前方検証の最良モデルを候補にします。
-押す方策と組み合わせ、**運搬全体**をseed 66000以降で評価します。
-成功数、胴体接触、回り込み中の機体同士の接触、最終位置誤差の順に選びます。
-このseed集合を、次のテスト集合と混ぜません。
-""")
-    code(r"""
-model = lesson.select_model(navigator, adapted_pusher)
-""")
-    markdown(r"""
-## Step 11 — 未使用の初期配置で評価する
-前方はseed 80000以降、側方は81000以降を使います。Tの初期yaw角は目標方向に対して±30度です。
-`quick` の評価は10秒で打ち切ります。`research` の100秒評価と混ぜて比較しないでください。
-成功しなかった試行も、接触・転倒・誤差を含めて記録します。
-""")
-    code(r"""
-test_results = lesson.evaluate(model)
-""")
-    markdown(r"""
-## Step 12 — 学習曲線と論文用の評価表を作る
-学習中のsuccess rateはその時点のカリキュラムの初期配置での値です。運搬全体のテスト成功率とは異なります。
-完了エピソードがない時点は、成功率を描画しません。
-成功率、接触、転倒、位置・yaw誤差、時間をCSVにまとめ、成功率のWilson 95%区間も表示します。
-区間は初期配置の試行に対するもので、異なる学習seedのばらつきではありません。卒論では学習seedを変えて複数回実行してください。
-""")
-    code(r"""
-lesson.show_results()
-""")
-    markdown(r"""
-## Step 13 — 自分で学習した方策を録画する
-参考モデルを使い回さず、Step 10で選んだ**自分のモデル**を実行します。
-seedは82000で固定し、成功した試行だけを探す選び方はしません。
-`quick` は後方近くから10秒、`research` は前方から100秒を上限にします。失敗した動画も結果として確認します。
-""")
-    code(r"""
-lesson.show_learned_video(model)
-""")
-    markdown(r"""
-## Step 14 — 実験結果を保存する
+    media.show_image(env.render())
+""",
+    ),
+    (
+        "markdown",
+        r"""## 5. 報酬の意味と、変更する場所を理解する
+回り込みの報酬は次の項の合計です。ペナルティ係数は正の値で指定し、式の中で減算します。
 
-設定、使用したコード・資産、ライブラリの版、重み、学習ログ、評価、図、CSV、動画をZIPへまとめます。
-Colabではダウンロードします。ランタイムの終了前に保存してください。
-長い学習のDrive保存・中断後の復元は、[保存と再開のガイド](https://github.com/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/docs/colab-guide.md#保存と再開)を参照してください。
-""")
-    code(r"""
-lesson.save_results()
-""")
-    markdown(r"""
-## 卒論で次に行う比較実験
+| 項 | 観測する量 | 既定の係数 |
+|---|---|---|
+| `progress` | Tを避ける経路距離の減少（m） | 6 |
+| `time` | 1ステップの時間（秒） | 0.04 |
+| `robot_contact` | 機体同士が接触した時間（秒） | 4 |
+| `body_contact` | 胴体がTに接触した時間（秒、2台平均） | 6 |
+| `cargo_displacement` | 回り込み開始時からTが動いた距離（m、毎ステップ） | 0.1 |
+| `success` / `failure` | 整列成功 / 転倒等の失敗時の一度の報酬 | +15 / −10 |
 
-1. `research` で学習seedを変え、別の実験名で少なくとも3回実行する。
-2. 同じテストseed集合で、報酬係数・カリキュラム・初期配置など1条件ずつ変えて比較する。
-3. 運搬成功率だけでなく、胴体接触・機体同士の接触・転倒・位置/yaw誤差・所要時間も報告する。
-4. 回り込み環境は2台専用で、障害物・観測誤差・実機条件は含まないことを論文で明示する。
+経路距離はTの周囲を通る距離で、直線距離だけを縮めて胴体を押し当てることを避けます。
+これは状態から計算する報酬であり、教師の行動ではありません。
 
-編集場所は展開した `docs/code-guide.md` を参照してください。回り込みの報酬は `ApproachRewardWeights`、押す報酬は `PushRewardWeights`、学習設定は `PPOSettings` にあります。
-ソースを編集した後は新しい実験名で別プロセスの学習を開始してください。変更内容も論文・記録へ残してください。
+次のセルは**ライブラリが実際に学習で使う関数**を表示します。
+最初は係数を変更しましょう。報酬の項や式そのものを研究する場合は
+`src/hexapod_transport_rl/rewards.py` のこの関数を編集して、新規ランタイム・新規実験で学習します。
+""",
+    ),
+    (
+        "code",
+        r"""import inspect
+from hexapod_transport_rl.rewards import approach_reward_terms
 
-Colabの実行環境には時間・資源の制限があり、ランタイム内の未保存ファイルは失われることがあります。
-[Colab公式FAQ](https://research.google.com/colaboratory/faq.html) / [uvのPython管理](https://docs.astral.sh/uv/guides/install-python/) / [MuJoCoのPython API](https://mujoco.readthedocs.io/en/stable/python.html)
-""")
-    notebook = {
-        "nbformat": 4,
-        "nbformat_minor": 5,
-        "metadata": {
-            "colab": {"name": OUTPUT.name, "provenance": []},
-            "kernelspec": {"name": "python3", "display_name": "Python 3"},
-            "language_info": {"name": "python", "version": "3.12"},
-            "hexapod_transport_rl": {"repository": REPOSITORY, "mode_default": "quick"},
-        },
-        "cells": cells,
-    }
-    for index, cell in enumerate(cells):
-        cell["id"] = f"lesson_{index:02d}"
-    OUTPUT.parent.mkdir(exist_ok=True)
-    OUTPUT.write_text(json.dumps(notebook, ensure_ascii=False, indent=1) + "\n")
-    print(f"Built {OUTPUT}: {len(cells)} cells, {OUTPUT.stat().st_size / 1024:.1f} KiB")
+print(inspect.getsource(approach_reward_terms))
+""",
+    ),
+    (
+        "markdown",
+        r"""## 6. 仮説を立て、報酬を1項目だけ変える
+例：「接触ペナルティを3倍にすると、機体同士の接触が減る」。
+接触を避けるために遠回りしたり、動かなくなる可能性もあります。
+成功率・時間・動画も見て、仮説を検証しましょう。
+
+以下の `robot_contact=12.0` が学生の編集箇所です。
+`replace()` は既定の設定の1項目だけを変更し、元の設定を残します。
+報酬設定は環境ごとに持つため、他の条件や並列ワーカーへ混ざりません。
+""",
+    ),
+    (
+        "code",
+        r"""from dataclasses import replace
+from hexapod_transport_rl import ApproachRewardWeights
+
+baseline_reward = ApproachRewardWeights()
+changed_reward = replace(baseline_reward, robot_contact=12.0)
+
+baseline_config = ApproachConfig(easier_reset_fraction=0.25, reward_weights=baseline_reward)
+changed_config = replace(baseline_config, reward_weights=changed_reward)
+conditions = {"baseline": baseline_config, "strong_contact": changed_config}
+""",
+    ),
+    (
+        "markdown",
+        r"""まず同じ初期状態・同じ行動で報酬を確認します。
+この短い1ステップで機体同士が接触しなければ、変更した項は0で、報酬も同じです。
+「係数を変更しただけで常に報酬が変わる」わけではありません。
+`time` の係数を変えると、停止指令のこのステップでも違いを確認できます。
+""",
+    ),
+    (
+        "code",
+        r"""for name, config in conditions.items():
+    with ApproachEnv(replace(config, layout="front")) as env:
+        env.reset(seed=80000)
+        _, reward, _, _, info = env.step(np.zeros((2, 3), dtype=np.float32))
+        print(name, "報酬:", reward, "内訳:", info["reward_terms"])
+""",
+    ),
+    (
+        "markdown",
+        r"""## 7. 同じ学習条件で、2種類の報酬を学習する
+両条件とも回り込みactorは同じseedでランダム初期化します。
+歩行モデル・押すモデル・物理条件・学習量・MAPPOの設定・カリキュラムの規則を共通にします。
+近い配置 → 後方 → 側方 → 前方と進み、検証成功率75%以上・各段階50更新以上で難度が上がります。
+報酬によって進む段階が変わる可能性があるため、到達段階もログで確認してください。
+
+初期値の **256チームステップ／条件は動作確認だけ**です。運搬成功を期待する学習量ではありません。
+一巡できたら、新しい `EXPERIMENT_NAME` と `TRAINING_STEPS = 409600` を設定して本学習します。
+1チームステップは「2台のいる世界を1回進める」ことです。並列数×horizonが1更新の収集量です。
+`NUM_ENVS` は独立した世界の数で、ロボット台数ではありません。
+学習中は描画せず、CPUの並列シミュレーションを使います。
+
+結果を混ぜないため、新規実験名で実行します。保存補助はソース・資産・実行環境の記録だけを行い、
+学習や評価は下のセルから直接呼び出します。
+""",
+    ),
+    (
+        "code",
+        r"""from hexapod_transport_rl import train_approach
+from hexapod_transport_rl.experiments import create_experiment
+
+EXPERIMENT_NAME = "reward_trial_01"
+TRAINING_SEED = 20261008
+NUM_ENVS = 2
+HORIZON = 64
+TRAINING_STEPS = 256
+ITERATIONS = TRAINING_STEPS // (NUM_ENVS * HORIZON)
+
+RUN_DIR = create_experiment(PROJECT_DIR, EXPERIMENT_NAME)
+PUSHER = RUN_DIR / "source_snapshot/checkpoints/pusher.pt"
+print("1条件あたりの収集量:", ITERATIONS * NUM_ENVS * HORIZON, "チームステップ")
+""",
+    ),
+    (
+        "markdown",
+        r"""### 参考：以前に学習した運搬モデルの動きを見る
+自分の比較学習の前に、Tを回り込んで押す目標の挙動を確認します。
+これは以前の報酬学習モデルの再生で、今回の学習の結果ではありません。
+この動画や行動を教師として学習に使いません。
+""",
+    ),
+    (
+        "code",
+        r"""from hexapod_transport_rl import evaluate_transport
+import imageio.v3 as iio
+
+REFERENCE = PROJECT_DIR / "checkpoints/transport.pt"
+evaluate_transport(
+    checkpoint=REFERENCE, output=RUN_DIR / "reference.json",
+    episodes=1, seed=70000, workers=1, layout="front", episode_seconds=100.0,
+    video_dir=RUN_DIR / "reference_video", video_width=640, video_height=480,
+    video_fps=5, fast_video=True,
+)
+media.show_video(iio.imread(next((RUN_DIR / "reference_video").glob("*.mp4"))), fps=5)
+""",
+    ),
+    (
+        "code",
+        r"""models = {}
+for name, config in conditions.items():
+    print("学習条件:", name)
+    models[name] = train_approach(
+        output=RUN_DIR / name,
+        pushing_checkpoint=PUSHER,
+        config=config,
+        iterations=ITERATIONS,
+        num_envs=NUM_ENVS,
+        horizon=HORIZON,
+        seed=TRAINING_SEED,
+    )
+""",
+    ),
+    (
+        "markdown",
+        r"""`metrics.jsonl` に更新ごとの収集量・速度・カリキュラムが残ります。
+以下で実測速度と本学習の概算を確認します。検証や初期化にも時間がかかるため概算です。
+異なる報酬設計の総報酬の大小は、性能の良し悪しとして比較しません。
+""",
+    ),
+    (
+        "code",
+        r"""import json
+import pandas as pd
+
+training_logs = {}
+for name in conditions:
+    records = [json.loads(line) for line in (RUN_DIR / name / "metrics.jsonl").read_text().splitlines()]
+    training_logs[name] = pd.DataFrame(records)
+    display(training_logs[name].tail(3))
+    speed = training_logs[name]["transitions_per_second"].mean()
+    print(name, "学習速度:", round(speed, 1), "チームステップ/秒")
+    print("409600ステップの概算:", round(409600 / speed / 3600, 2), "時間/条件（検証等を除く）")
+""",
+    ),
+    (
+        "markdown",
+        r"""## 8. 学習と別の初期配置で定量評価する
+同じ学習量の**最後のモデル**を比較します。テスト結果を見てモデルを選び直しません。
+両条件に同じテストseedを使い、前方・側方から始めます。
+回り込みが成功すると、共通の押す方策へ切り替えて運搬を続けます。
+
+初期値は2試行・10秒で、評価APIの動作確認です。本評価では
+`EVALUATION_EPISODES = 50`、`EPISODE_SECONDS = 100.0` に変更します。
+50試行の結果にも初期配置によるばらつきがあります。
+学習seedも少なくとも3種類で実験を繰り返し、条件ごとの平均・ばらつきを報告しましょう。
+
+報酬とは独立した、成功率・接触・転倒・最終位置誤差を比較します。
+所要時間は成功例のみで集計し、成功数も併記します。
+""",
+    ),
+    (
+        "code",
+        r"""from hexapod_transport_rl import evaluate_transport
+
+EVALUATION_EPISODES = 2
+EPISODE_SECONDS = 10.0
+TEST_SEEDS = {"front": 80000, "side": 81000}
+
+reports = {}
+for name, checkpoint in models.items():
+    for layout, seed in TEST_SEEDS.items():
+        reports[name, layout] = evaluate_transport(
+            checkpoint=checkpoint,
+            output=RUN_DIR / "evaluation" / name / f"{layout}.json",
+            episodes=EVALUATION_EPISODES,
+            seed=seed,
+            workers=NUM_ENVS,
+            layout=layout,
+            episode_seconds=EPISODE_SECONDS,
+        )
+""",
+    ),
+    (
+        "code",
+        r"""rows = []
+for (name, layout), report in reports.items():
+    successes = [episode["elapsed_seconds"] for episode in report["episodes"] if episode["success"]]
+    rows.append({
+        "condition": name, "layout": layout,
+        "success_rate": report["success_rate"],
+        "successes": report["successes"], "episodes": len(report["episodes"]),
+        "handovers": report["handovers"],
+        "robot_contact_episodes": report["robot_contact_episodes"],
+        "navigation_robot_contact_episodes": report["navigation_robot_contact_episodes"],
+        "body_contact_episodes": report["body_contact_episodes"],
+        "falls": report["falls"],
+        "final_distance_m": report["mean_final_distance_m"],
+        "final_yaw_error_rad": np.mean([episode["yaw_error"] for episode in report["episodes"]]),
+        "successful_time_s": np.mean(successes) if successes else np.nan,
+    })
+comparison = pd.DataFrame(rows)
+comparison.to_csv(RUN_DIR / "comparison.csv", index=False)
+display(comparison)
+""",
+    ),
+    (
+        "markdown",
+        r"""## 9. 図と動画で違いを説明する
+まず成功率の図を見て、続いて同じ初期配置の動画を比較します。
+成功率だけでなく、回り込む経路・機体同士の接触・停止・脚と胴体の接触を観察してください。
+接触したエピソードの数だけでは接触時間や強さは分からないため、必要なら評価JSONの接触力積も調べます。
+""",
+    ),
+    (
+        "code",
+        r"""import matplotlib.pyplot as plt
+
+success_table = comparison.pivot(index="layout", columns="condition", values="success_rate")
+ax = success_table.plot.bar(ylim=(0, 1), ylabel="Transport success rate", rot=0)
+ax.figure.tight_layout()
+ax.figure.savefig(RUN_DIR / "success_rate.png", dpi=160)
+plt.show()
+""",
+    ),
+    (
+        "code",
+        r"""import imageio.v3 as iio
+
+videos = []
+for name, checkpoint in models.items():
+    video_dir = RUN_DIR / "videos" / name
+    evaluate_transport(
+        checkpoint=checkpoint,
+        output=RUN_DIR / "video_evaluation" / f"{name}.json",
+        episodes=1,
+        seed=82000,
+        workers=1,
+        layout="front",
+        episode_seconds=EPISODE_SECONDS,
+        video_dir=video_dir,
+        video_width=640,
+        video_height=480,
+        video_fps=5,
+        fast_video=True,
+    )
+    videos.append(iio.imread(next(video_dir.glob("*.mp4"))))
+media.show_videos(videos, fps=5, titles=list(models))
+""",
+    ),
+    (
+        "markdown",
+        r"""## 10. 結果を保存し、研究として考察する
+保存するものは実験条件・使用したコードとモデル・学習ログ・評価JSON・比較CSV・図・動画です。
+次のセルでZIPを作ります。Colabではファイル一覧からダウンロードしてください。
+ランタイムを終了すると未保存の結果は失われます。本学習では途中checkpointもDrive等へ保存してください。
+
+レポートには、次の内容を書きましょう。
+
+1. 変更した報酬と、変更前に立てた仮説。
+2. 共通にした条件、学習量、学習seed、評価seed、到達カリキュラム。
+3. 成功率・接触・転倒・位置誤差・成功時の時間と、動画で分かった違い。
+4. 仮説が支持されたか。失敗した場合、報酬設計・学習不足・初期配置のどれが原因か。
+5. 次に1つだけ変更して検証する条件。
+
+**拡張課題：押す段階の報酬を調べる場合**は、`PushRewardWeights` を `PushConfig(reward_weights=...)`
+へ渡せます。押す方策の追加学習では、`train_handover(..., reward_weights=...)` を使います。
+比較する両条件とも同じ元の押すcheckpointから開始し、同じ学習量で追加学習します。
+回り込みと押す報酬を同時に変えると原因を切り分けにくいため、最初は片方ずつ調べてください。
+APIの詳細・再開方法は [教材ガイド](https://github.com/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/docs/colab-guide.md) にあります。
+""",
+    ),
+    (
+        "code",
+        r"""from hexapod_transport_rl.experiments import archive_results
+
+archive = archive_results(RUN_DIR)
+print("保存先:", archive)
+""",
+    ),
+]
+
+
+def main():
+    cells = []
+    for index, (kind, source) in enumerate(CELLS):
+        cell = dict(cell_type=kind, id=f"cell-{index:02d}", metadata={}, source=source)
+        if kind == "code":
+            cell.update(execution_count=None, outputs=[])
+        cells.append(cell)
+    notebook = dict(
+        cells=cells,
+        nbformat=4,
+        nbformat_minor=5,
+        metadata=dict(
+            kernelspec=dict(display_name="Python 3", language="python", name="python3"),
+            language_info=dict(name="python", version="3.12"),
+            colab=dict(provenance=[]),
+        ),
+    )
+    output = ROOT / "notebooks/hexapod_transport_rl_colab.ipynb"
+    output.write_text(json.dumps(notebook, ensure_ascii=False, indent=1) + "\n")
 
 
 if __name__ == "__main__":

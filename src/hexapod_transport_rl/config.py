@@ -4,12 +4,13 @@ PushConfig is serialized into checkpoints: keep field names/defaults compatible.
 Lengths are meters, angles radians, time seconds, mass kilograms.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 from numpy.typing import ArrayLike
 
+from .rewards import PushRewardWeights
 from .types import FloatArray
 
 # Joint order and neutral pose must match the exported walking controller.
@@ -83,8 +84,13 @@ class PushConfig:
     # Arena and desired pushing formation, in meters.
     arena_radius: float = 8.0
     push_gap: float = 0.30
+    reward_weights: PushRewardWeights = field(default_factory=PushRewardWeights)
 
     def __post_init__(self) -> None:
+        if isinstance(self.reward_weights, dict):
+            object.__setattr__(
+                self, "reward_weights", PushRewardWeights(**self.reward_weights)
+            )
         if not isinstance(self.num_robots, int) or not 2 <= self.num_robots <= 4:
             raise ValueError("num_robots must be an integer between 2 and 4")
         if self.shape not in ("box", "T"):

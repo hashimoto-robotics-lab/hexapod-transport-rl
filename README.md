@@ -12,23 +12,30 @@
 **GitHubアカウント・招待・アクセストークンは不要**です。
 コード・ロボット形状・学習済みモデルは、Step 1で公開リポジトリから自動取得します。
 
-まず研究の動機を読み、学習済み歩行モデルへ前進・横移動・旋回のコマンドを送って、動画で動きを確かめます。
-歩行の操作は `WalkingSimulation` の `set_velocity()`・`run_for()`・`stop()` に統一し、1台と4台の例を用意しています。
-続いて、2台へのコマンドを決める運搬方策を学習します。4台の協調運搬学習は、今後の拡張課題です。
-上から順に、準備、歩行体験、API確認、参考の運搬モデルの再生、学習、検証用モデル選定、独立したテスト、
-学習曲線・評価表、動画、結果ZIPの保存を実行します。CPUランタイムを使用できます。
+まず研究の動機を読み、学習済み歩行モデルへ速度コマンドを送って1台と4台の動きを確かめます。
+続いて環境の `reset()`・`step()` と、観測・行動・報酬の内訳を確認します。
+**報酬係数を1つ変え、同じ条件で学習し、同じ評価seedで図・動画を比較する**教材です。
 
-- `mode="quick"`：短い学習で全工程の接続を確認。卒論の性能評価には使いません。
-- `mode="research"`：チームステップ数を指定して本学習。
-- `start_from_scratch=True`：上位の押す方策もランダムな重みから学習。
-- `start_from_scratch=False`：報酬で学習済みの押す方策を使い、回り込みと引き継ぎ動作を学習。
+```python
+from dataclasses import replace
+from hexapod_transport_rl import ApproachConfig, ApproachRewardWeights, train_approach
 
-設定は `lesson.configure()`、学習・評価・保存は `lesson` のAPIで実行します。
-歩行・環境APIは普通に `import` してセル内で操作できます。
-動画はMuJoCo公式チュートリアルと同じmediapyで表示します。
-並列学習のプロセス管理や、準備・保存の処理は補助APIが担当します。
-どちらでも歩行方策は固定します。デモ行動や模倣損失は使いません。
-詳しい進め方と保存・再開は [Colabガイド](docs/colab-guide.md)、実装は [コードガイド](docs/code-guide.md) を参照してください。
+reward = replace(ApproachRewardWeights(), robot_contact=12.0)
+config = ApproachConfig(reward_weights=reward, easier_reset_fraction=0.25)
+model = train_approach(
+    output="runs/contact_trial",
+    pushing_checkpoint="checkpoints/pusher.pt",
+    config=config, iterations=3200, num_envs=2, horizon=64,
+)
+```
+
+学習・評価は通常のimportと関数呼び出しで、ColabのPythonから直接実行します。
+回り込みの報酬を比較する際は、歩行モデルと押す方策を共通に固定します。デモは教師に使いません。
+動画はmediapyで表示します。準備補助はインストールだけ、保存補助は記録とZIP作成だけを担当します。
+最初の256チームステップ／条件は動作確認です。本学習の目安は409,600ステップ／条件で、
+本評価は50試行・100秒、学習seedを少なくとも3種類で繰り返します。
+4台の協調運搬学習は環境拡張・再学習を伴う課題です。
+詳しくは [Colabガイド](docs/colab-guide.md)、[APIガイド](docs/api.md)、[コードガイド](docs/code-guide.md) を参照してください。
 
 ## ローカルで実行する
 
@@ -90,8 +97,7 @@ checkpoints/                             学習済みの運搬モデル
 docs/                                    教材とAPIの説明
 tests/                                   物理・学習・モデル再生の確認
 tools/build_colab.py                      教員向け：ノートブックの再生成
-tools/colab_runtime.py                    Colabの準備・学習実行・保存の補助API
-tools/colab_analysis.py                   学習曲線・評価表の生成
+tools/colab_runtime.py                    Colabのインストールと描画設定のみ
 runs/                                    実験ログ・動画（配布には不要）
 ```
 
