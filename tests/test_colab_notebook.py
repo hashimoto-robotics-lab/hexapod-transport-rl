@@ -13,7 +13,7 @@ NOTEBOOK = ROOT / "notebooks/hexapod_transport_rl_colab.ipynb"
 def test_notebook_uses_direct_simulation_imports():
     notebook = nbformat.read(NOTEBOOK, as_version=4)
     nbformat.validate(notebook)
-    walking_simulations = 0
+    walking_environments = 0
     for index, cell in enumerate(notebook.cells):
         if cell.cell_type != "code":
             continue
@@ -27,13 +27,16 @@ def test_notebook_uses_direct_simulation_imports():
         for node in ast.walk(tree):
             if (
                 isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "WalkingSimulation"
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "make"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "HexapodWalking-v0"
             ):
-                walking_simulations += 1
+                walking_environments += 1
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                 assert node.func.attr not in ("run_example", "run_python")
-    assert walking_simulations == 2
+    assert walking_environments == 2
     assert all(
         cell.execution_count is None and cell.outputs == []
         for cell in notebook.cells

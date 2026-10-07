@@ -19,6 +19,7 @@ from .rewards import ApproachRewardWeights, approach_reward_terms
 from .types import FloatArray, Info, Observation, ResetResult, StepResult
 
 SIDES = np.array([-1, 1])  # robot_0は右側、robot_1は左側を担当する。
+APPROACH_ENV_ID = "HexapodApproach-v0"
 OBS_DIM = 10
 CURRICULUM_LAYOUTS = ("near", "rear", "side", "front")
 LAYOUT_TIME_LIMITS = {"near": 10, "rear": 20, "side": 40, "front": 65}
@@ -249,25 +250,33 @@ class ApproachEnv(HexapodPushEnv):
 
     def __init__(
         self,
-        config: ApproachConfig | None = None,
+        config: ApproachConfig | dict | None = None,
         asset_root: str | Path | None = None,
         *,
         render_mode: str | None = None,
+        flatten: bool = False,
         width: int = 640,
         height: int = 480,
     ) -> None:
+        if isinstance(config, dict):
+            config = ApproachConfig(**config)
+        if config is not None and not isinstance(config, ApproachConfig):
+            raise TypeError("config must be ApproachConfig, dict, or None")
         approach_config = config or ApproachConfig()
         super().__init__(
             PushConfig(shape="T", episode_seconds=approach_config.seconds),
             asset_root,
             render_mode=render_mode,
+            flatten=flatten,
             width=width,
             height=height,
         )
         self.config = approach_config
         self.state_space = spaces.Box(-np.inf, np.inf, (2 * OBS_DIM,), np.float32)
-        self.observation_space = spaces.Box(-np.inf, np.inf, (2, OBS_DIM), np.float32)
-        self.action_space = spaces.Box(-1, 1, (2, 3), np.float32)
+        self.observation_space = spaces.Box(
+            -np.inf, np.inf, (2 * OBS_DIM,) if flatten else (2, OBS_DIM), np.float32
+        )
+        self.action_space = spaces.Box(-1, 1, (6,) if flatten else (2, 3), np.float32)
         self.ready_steps = 0
 
     @property
@@ -290,18 +299,30 @@ class ApproachEnv(HexapodPushEnv):
         self._has_reset = True
         self._episode_return = 0.0
         self.ready_steps = 0
-        obs = reset_approach(self.core, self.config)
-        return obs, {"is_success": False}
+        reset_config = replace(
+            self.config, layout=(options or {}).get("layout", self.config.layout)
+        )
+        obs = reset_approach(self.core, reset_config)
+        info = self._episode_info(self.core.info())
+        info.update(
+            approach_success=False, layout=self.core.approach_layout, reward_terms={}
+        )
+        return self._format_observation(obs), info
 
     def step(self, action: FloatArray) -> StepResult:
         """行動の検証 → 物理更新 → 整列判定 → 報酬 → 終了判定。"""
         self._require_ready()
         if self.core.done:
             raise gym.error.ResetNeeded("Episode ended; call reset() before step()")
-        if not self.action_space.contains(np.asarray(action, dtype=np.float32)):
-            raise ValueError("Expected canonical actions (2,3) in [-1,1]")
+        action = np.asarray(action, dtype=np.float32)
+        if not self.action_space.contains(action):
+            raise ValueError(
+                f"Expected canonical actions {self.action_space.shape} in [-1,1]"
+            )
         previous_potential = route_potential(self.core)
-        _, _, terminated, truncated, info = self.core.step(physical_actions(action))
+        _, _, terminated, truncated, info = self.core.step(
+            physical_actions(action.reshape(2, 3))
+        )
         ready = bool(approach_ready(self.core).all())
         self.ready_steps = self.ready_steps + 1 if ready else 0
         success = self.ready_steps >= HANDOVER_HOLD_STEPS and not info["failed"]
@@ -328,13 +349,21 @@ class ApproachEnv(HexapodPushEnv):
         self.core.done = terminated or truncated
         self._episode_return += reward
         info.update(
+            success=success,
+            layout=self.core.approach_layout,
             is_success=success,
             approach_success=success,
             reward_terms=terms,
             team_reward=reward,
             episode_return=self._episode_return,
         )
-        return observe_approach(self.core), float(reward), terminated, truncated, info
+        return (
+            self._format_observation(observe_approach(self.core)),
+            float(reward),
+            terminated,
+            truncated,
+            self._episode_info(info, reward, terminated, truncated),
+        )
 
     def state(self) -> Observation:
         """Central critic receives both navigation observations."""
@@ -365,3 +394,9 @@ def make_approach_vector(
     if asynchronous:
         return gym.vector.AsyncVectorEnv(factories, context="spawn", **kwargs)
     return gym.vector.SyncVectorEnv(factories, **kwargs)
+
+
+if APPROACH_ENV_ID not in gym.registry:
+    gym.register(
+        id=APPROACH_ENV_ID, entry_point="hexapod_transport_rl.approach:ApproachEnv"
+    )

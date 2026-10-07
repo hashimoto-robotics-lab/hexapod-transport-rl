@@ -13,7 +13,8 @@
 コード・ロボット形状・学習済みモデルは、Step 1で公開リポジトリから自動取得します。
 
 まず研究の動機を読み、学習済み歩行モデルへ速度コマンドを送って1台と4台の動きを確かめます。
-続いて環境の `reset()`・`step()` と、観測・行動・報酬の内訳を確認します。
+歩行・回り込み・押す環境は `gym.make()` で作り、共通の `reset()`・`step()`・`render()` で操作します。
+観測・行動の形はspaces、報酬の内訳は `info["reward_terms"]` で確認します。
 **報酬係数を1つ変え、同じ条件で学習し、同じ評価seedで図・動画を比較する**教材です。
 
 ```python
@@ -89,7 +90,8 @@ uv sync --locked
 ```text
 notebooks/hexapod_transport_rl_colab.ipynb  学生向けの入口
 src/hexapod_transport_rl/                 学習・環境・評価
-  walking.py                            学生向け：1〜4台への速度指令
+  walking_env.py                        Gymnasium：1〜4台への速度指令
+  walking.py                            共通の歩行シミュレーション
   locomotion.py                         歩行・運搬で共通の固定歩行モデル
   assets/robot/                          XMLとメッシュ
   assets/locomotion/                     固定歩行モデル

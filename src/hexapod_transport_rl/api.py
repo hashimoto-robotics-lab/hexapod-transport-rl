@@ -126,7 +126,7 @@ class HexapodPushEnv(gym.Env):
             episode_return=self._episode_return,
             elapsed_steps=self.core.steps,
             termination_reason=reason,
-            state=self.core.state().copy(),
+            state=self.state(),
             commands=self.core.last_commands.copy(),
         )
         return info

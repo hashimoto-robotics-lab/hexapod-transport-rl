@@ -12,6 +12,10 @@ from .locomotion import WalkingController
 from .model import build_walking_model
 
 
+class WalkingFallError(RuntimeError):
+    """The command demonstration stopped because a robot fell."""
+
+
 class WalkingSimulation:
     """A floor and robots, without cargo, rewards, or a training algorithm.
 
@@ -183,7 +187,9 @@ class WalkingSimulation:
         if np.any(self.data.xpos[ids, 2] < 0.08) or np.any(
             self.data.xmat[ids, 8] < 0.5
         ):
-            raise RuntimeError("A robot fell; reset() before trying another command")
+            raise WalkingFallError(
+                "A robot fell; reset() before trying another command"
+            )
         self._recording_ticks += 1
         if self._recording_started and self._recording_ticks % 5 == 0:
             self._record_frame()

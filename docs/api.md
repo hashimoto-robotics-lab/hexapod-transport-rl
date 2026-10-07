@@ -1,62 +1,78 @@
 # 歩行コマンドと学習環境API
 
 実行手順は [README](../README.md)、内部構造は [コードガイド](code-guide.md) を参照してください。
-歩行の体験には `WalkingSimulation` を使います。
-学習ではGymnasium形式の `reset` / `step` を使います。報酬は2台で共有する1つの値です。
+歩行・回り込み・押す環境を、[Gymnasium標準のAPI](https://gymnasium.farama.org/api/env/) で操作します。
+複数のロボットが同じ世界で接触するため、全機分の行動をまとめて1つの `step()` へ渡します。
+学習用の報酬はチーム全体の1つの値です。
 
-## 学習済みロボットへの速度指令
+## 共通の操作
 
 ```python
+import gymnasium as gym
+import numpy as np
 import mediapy as media
-from hexapod_transport_rl import WalkingSimulation
+import hexapod_transport_rl  # 環境を登録する
 
-with WalkingSimulation(num_robots=4, record=True) as sim:
-    sim.set_velocity(robot_id=0, vx=0.12)       # 前進 [m/s]
-    sim.set_velocity(robot_id=1, vy=0.06)       # 左移動 [m/s]
-    sim.set_velocity(robot_id=2, yaw_rate=0.4)  # 左旋回 [rad/s]
-    sim.run_for(seconds=3.0)                   # 全機が同時に動く
-    sim.stop()
-    sim.run_for(seconds=0.8)                   # 減速を観察する
-
-media.show_video(sim.frames, fps=5)
+with gym.make("HexapodWalking-v0", num_robots=1, render_mode="rgb_array") as env:
+    observation, info = env.reset(seed=42)
+    frames = [env.render()]
+    terminated = truncated = False
+    while not (terminated or truncated):
+        action = np.array([[0.12, 0.0, 0.0]], dtype=np.float32)
+        observation, reward, terminated, truncated, info = env.step(action)
+        frames.append(env.render())
+media.show_video(frames, fps=5)
 ```
 
 | 操作 | 意味 |
 |---|---|
-| `WalkingSimulation(num_robots=1)` | 荷物のない床に1〜4台を置き、固定歩行モデルを読み込む |
-| `set_velocity(robot_id, vx=0, vy=0, yaw_rate=0)` | 1台の速度指令を置き換える。時間は進めない |
-| `run_for(seconds=...)` | 現在の指令で全機を同時に進める。時間は0.04秒刻み |
-| `stop(robot_id=...)` / `stop()` | 1台／全台にゼロ速度を指令する。時間は進めない |
-| `reset(poses=[[x, y, yaw], ...])` | 世界座標の位置[m]と向き[rad]で配置し、全機の指令・時刻をリセット |
-| `positions` / `headings` / `velocities` / `time` | 実測位置[m]・向き[rad]・現在の目標速度・経過時刻[s] |
-| `render()` | 現在の640×480 RGB画像を取得する |
-| `WalkingSimulation(record=True)` / `frames` | 5 fpsで画像を記録し、mediapyに渡すフレーム配列を取得する |
+| `gym.make(id, ...)` | 環境を作り、固定した歩行モデルを読み込む |
+| `reset(seed=..., options=...)` | 初期状態を作り、観測と診断情報を返す |
+| `step(action)` | 全機を0.2秒進め、観測・報酬・終了・時間切れ・診断情報を返す |
+| `render()` | `render_mode="rgb_array"` のときRGB画像を返す |
+| `close()` | 描画資源を解放する。`with` では自動 |
+| `action_space` / `observation_space` | 有効な行動・観測の形と範囲 |
 
-指令は**機体座標**です。前進 `vx` は−0.15〜0.20 m/s、左移動 `vy` は±0.10 m/s、左旋回 `yaw_rate` は±0.60 rad/sです。
-範囲外の指令はエラーにします。省略した成分はゼロ、他の機体の指令は維持します。
-`set_velocity()` で設定した指令は、次に変更するまで続きます。
-停止も目標速度の指定であり、実際の減速を観察するには `run_for()` で時間を進めます。
-`positions` などの配列はコピーを返すため、配列を書き換えてもシミュレーションは変わりません。
+`terminated` は成功や転倒、`truncated` は時間切れです。どちらかがTrueならエピソードを終えます。
+自動resetはしないので、次のエピソードを始めるときは `reset()` を呼びます。
+`gym.wrappers.RecordEpisodeStatistics` 等の標準ラッパーも使えます。
 
-`with` を抜けると描画資源を解放します。`sim.frames` はその後も取得でき、mediapyで表示・保存できます。
-録画は640×480・5 fps、歩行は25 Hz、物理計算は200 Hzです。
-`reset()` はロボットの状態を初期化しますが、記録したフレームは保持します。
-フレームを集め直すときは、新しい `WalkingSimulation` を作ります。
+| 環境ID | 対応台数 | 観測 | 行動 |
+|---|---|---|---|
+| `HexapodWalking-v0` | 1〜4 | `(N, 6)` | `(N, 3)`、物理速度 |
+| `HexapodApproach-v0` | 2 | `(2, 10)` | `(2, 3)`、−1〜1 |
+| `HexapodPush-v0` (`flatten=False`) | 2〜4 | `(N, 16 + 4×(N−1))` | `(N, 3)`、−1〜1 |
 
-ファイルとして保存したい場合は `media.write_video("walking.mp4", sim.frames, fps=5)` を使います。
-長い動画をメモリに蓄積せず保存する用途には、従来の `video_path="walking.mp4"` も使えます。
-`record=True` を指定しなければメモリへのフレーム記録は行いません。
-録画する場合はColabガイドの描画環境を準備してください。録画しない操作には描画環境は不要です。
-歩行体験では報酬や運搬モデルを使いません。4台の歩行操作と、4台の協調運搬を学習できることは別々に検証します。
+回り込みで `flatten=True` にすると観測 `(20,)`・行動 `(6,)` です。
+押す環境は既定が `flatten=True` で、2台なら観測 `(40,)`・行動 `(6,)` です。
+Gymnasiumではチームを1つの意思決定主体として扱います。これは機体別の辞書を返すPettingZooのAPIとは異なります。
+
+## 学習済み歩行モデルへの指令
+
+歩行環境の各行は `[vx, vy, yaw_rate]` です。指令は機体座標で、
+前進 `vx` は−0.15〜0.20 m/s、左移動 `vy` は±0.10 m/s、左旋回 `yaw_rate` は±0.60 rad/sです。
+歩行モデルの物理速度指令と、上位の学習方策の正規化行動を混同しないでください。
+ゼロ行動は停止指令ですが、実際の減速には時間が必要です。
+
+観測の6成分は `[世界x, 世界y, 向き, 前回vx指令, 前回vy指令, 前回旋回指令]` です。
+最後の3成分は実測速度ではなく、送った目標速度です。
+`info` に `positions`、`headings`、`commands`、`elapsed_seconds`、`robot_fall` を返します。
+歩行体験用なので報酬は常に0です。転倒で `terminated=True`、`episode_seconds` に達すると `truncated=True` です。
+制限時間は0.2秒刻みで指定します。
+
+`reset(options={"poses": [[x, y, yaw], ...]})` で世界座標の配置を指定できます。
+歩行APIは指定した配置から始め、ランダム配置は行いません。
+録画しない場合は描画処理を実行しません。フレームは `render()` を呼んだときだけ取得します。
+動画は `media.write_video("walking.mp4", frames, fps=5)` で保存できます。
+内部では従来の `WalkingSimulation` と同じ歩行・モーター・接触計算を使います。
+直接の `set_velocity()` / `run_for()` も既存スクリプトとの互換性のため利用できます。
 
 ## 押す環境
 
 ```python
-from hexapod_transport_rl import PushConfig, HexapodPushEnv
+from hexapod_transport_rl import PushConfig
 
-with HexapodPushEnv(
-    PushConfig(shape="T"), flatten=False
-) as env:
+with gym.make("HexapodPush-v0", config=PushConfig(shape="T"), flatten=False) as env:
     obs, info = env.reset(seed=42)
     action = env.action_space.sample()  # 実際の学習ではactorの出力
     next_obs, reward, terminated, truncated, info = env.step(action)
@@ -67,7 +83,7 @@ with HexapodPushEnv(
 | 観測 | `float32 (2, 20)` |
 | 行動 | `float32 (2, 3)`、各値 `[-1, 1]` |
 | 報酬 | チーム共通のfloat |
-| 中央critic入力 | `env.state()` の `(40,)` |
+| 中央critic入力 | `env.unwrapped.state()` の `(40,)` |
 | 制御周期 | 1 step = 0.2秒、歩行25 Hz、MuJoCo物理200 Hz |
 
 各機の行動は機体座標の `[前後, 左右, 旋回]` です。
@@ -95,15 +111,17 @@ with HexapodPushEnv(
 ## 回り込み環境
 
 ```python
-from hexapod_transport_rl.approach import ApproachConfig, ApproachEnv
+from hexapod_transport_rl import ApproachConfig
 
-env = ApproachEnv(ApproachConfig(layout="front"))
-try:
+with gym.make("HexapodApproach-v0", config=ApproachConfig(layout="front")) as env:
     obs, info = env.reset(seed=42)
     next_obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
-finally:
-    env.close()
 ```
+
+`reset(options={"layout": "side"})` でそのエピソードだけ初期配置を指定できます。
+`config` は `ApproachConfig` または同じフィールドの辞書を受け取ります。
+診断情報には `state`、実際の機体速度指令 `commands`、`layout`、`is_success`、
+`episode_return`、`termination_reason`、`reward_terms` が入ります。
 
 観測は `(2, 10)`、行動は `(2, 3)` です。
 `observe_approach()` がT基準の位置・向き・自機速度・前回指令を作り、左右の機体を共通の座標へ反転します。
@@ -137,11 +155,11 @@ reset前に最終観測から価値を計算する処理は `mappo.py` に共通
 
 ```python
 from dataclasses import replace
-from hexapod_transport_rl import ApproachEnv, ApproachConfig, ApproachRewardWeights
+from hexapod_transport_rl import ApproachConfig, ApproachRewardWeights
 
 reward = replace(ApproachRewardWeights(), robot_contact=12.0)
 config = ApproachConfig(layout="front", reward_weights=reward)
-with ApproachEnv(config, render_mode="rgb_array") as env:
+with gym.make("HexapodApproach-v0", config=config, render_mode="rgb_array") as env:
     observation, info = env.reset(seed=80000)
     observation, reward, terminated, truncated, info = env.step(env.action_space.sample())
     terms = info["reward_terms"]  # 合計がこのstepのチーム報酬
@@ -150,7 +168,7 @@ with ApproachEnv(config, render_mode="rgb_array") as env:
 
 回り込みの観測は `(2, 10)`、行動は `(2, 3)` の−1〜1です。
 担当する左右の役割を反転した座標で行動を出し、内部で実際の機体速度へ戻します。
-中央critic用の `env.state()` は両機の観測を並べた `(20,)` です。
+中央critic用の `env.unwrapped.state()` は両機の観測を並べた `(20,)` です。
 `train_approach(config=config, ...)` へ同じ設定を渡すと、並列環境もその報酬で学習し、
 係数をcheckpointへ保存します。既存モデルの読み込みは従来の既定値を補います。
 式は `rewards.approach_reward_terms()`、押す報酬は `PushConfig(reward_weights=PushRewardWeights(...))` で設定します。

@@ -67,9 +67,10 @@ prepare_colab(PROJECT_DIR)
     (
         "markdown",
         r"""## 2. 学習済みの1台に速度コマンドを送る
-`WalkingSimulation` は床とロボットを用意するAPIです。このセルでは学習を行いません。
-`set_velocity()` は機体座標の目標速度を設定し、`run_for()` はその指令で時間を進めます。
-省略した速度成分はゼロになり、設定した指令は次の変更まで続きます。
+歩行・回り込み・押す環境を、同じGymnasiumのAPIで操作します。
+`gym.make()` で環境を作り、`reset()` で開始、`step(action)` で0.2秒進め、`render()` で画像を取得します。
+歩行環境の行動は、各機の機体座標の `[vx, vy, yaw_rate]` を並べた `(台数, 3)` の配列です。
+このセルでは学習済み歩行モデルに指令を送るだけで、新しい学習は行いません。
 
 | 引数 | 単位 | 範囲 | 正の方向 |
 |---|---|---|---|
@@ -78,62 +79,72 @@ prepare_colab(PROJECT_DIR)
 | `yaw_rate` | rad/s | −0.60〜0.60 | 左旋回 |
 
 まず速度を1つ変え、実際の移動を観察してください。目標速度と実速度には接触や姿勢による差があります。
-`run_for()` の時間は0.04秒刻みです。`record=True` でRGB画像を5 fpsで集めます。
+1ステップは0.2秒なので、15ステップで3秒間の前進です。
+行動は毎ステップ渡します。ゼロ行動は停止指令ですが、実際の減速には時間がかかります。
+`frames.append(env.render())` でRGB画像を集め、mediapyで5 fpsの動画として表示します。
+歩行の観測は `(台数, 6)` の `[世界x, 世界y, 向き, 前回vx指令, 前回vy指令, 前回旋回指令]` です。
+`info` には位置・向き・指令・経過時間が入ります。歩行体験用の報酬は常に0、転倒で終了、制限時間で時間切れになります。
 [MuJoCo公式チュートリアル](https://github.com/google-deepmind/mujoco/blob/main/python/tutorial.ipynb) と同じように、mediapyで表示します。
 """,
     ),
     (
         "code",
-        r"""import mediapy as media
-from hexapod_transport_rl import WalkingSimulation
+        r"""import gymnasium as gym
+import numpy as np
+import mediapy as media
+import hexapod_transport_rl  # Gymnasiumに教材の環境を登録する
 
-with WalkingSimulation(num_robots=1, record=True) as sim:
-    sim.stop()
-    sim.run_for(seconds=0.8)
-
-    sim.set_velocity(robot_id=0, vx=0.12)
-    sim.run_for(seconds=3.0)
-    print("前進後の位置 [m]:", sim.positions)
-
-    sim.set_velocity(robot_id=0, vy=0.06)
-    sim.run_for(seconds=2.4)
-    print("左移動後の位置 [m]:", sim.positions)
-
-    sim.set_velocity(robot_id=0, yaw_rate=0.40)
-    sim.run_for(seconds=2.4)
-    print("旋回後の向き [rad]:", sim.headings)
-
-    sim.stop()
-    sim.run_for(seconds=0.8)
-
-media.show_video(sim.frames, fps=5)
+with gym.make("HexapodWalking-v0", num_robots=1, episode_seconds=9.4, render_mode="rgb_array") as env:
+    observation, info = env.reset(seed=42)
+    frames = [env.render()]
+    for steps, command in [
+        (4, [0.0, 0.0, 0.0]),
+        (15, [0.12, 0.0, 0.0]),
+        (12, [0.0, 0.06, 0.0]),
+        (12, [0.0, 0.0, 0.40]),
+        (4, [0.0, 0.0, 0.0]),
+    ]:
+        action = np.array([command], dtype=np.float32)
+        for _ in range(steps):
+            observation, reward, terminated, truncated, info = env.step(action)
+            frames.append(env.render())
+            if terminated or truncated:
+                break
+        print("位置 [m]:", info["positions"], "向き [rad]:", info["headings"])
+        if terminated or truncated:
+            break
+media.show_video(frames, fps=5)
 """,
     ),
     (
         "markdown",
         r"""## 3. 複数台に独立したコマンドを送る
-`robot_id` は0から始まります。全機の物理シミュレーションを同時に進めます。
+行動配列の0行目が0番、1行目が1番のロボットです。
+`step(action)` は全機の物理シミュレーションを同時に進めます。
 同じ歩行モデルを各機が使っていても、送る速度を変えると別々に動きます。
 ここでの指令は手で指定しています。後の学習では上位方策が指令を決めます。
 """,
     ),
     (
         "code",
-        r"""from hexapod_transport_rl import WalkingSimulation
-
-with WalkingSimulation(num_robots=4, record=True) as sim:
-    sim.run_for(seconds=0.8)
-    sim.set_velocity(robot_id=0, vx=0.10)
-    sim.set_velocity(robot_id=1, vx=0.05)
-    sim.set_velocity(robot_id=2, vx=0.08, vy=0.04)
-    sim.set_velocity(robot_id=3, yaw_rate=0.30)
-    sim.run_for(seconds=3.0)
-    print("4台の位置 [m]:", sim.positions)
-    print("4台の向き [rad]:", sim.headings)
-    sim.stop()
-    sim.run_for(seconds=0.8)
-
-media.show_video(sim.frames, fps=5)
+        r"""with gym.make("HexapodWalking-v0", num_robots=4, episode_seconds=4.6, render_mode="rgb_array") as env:
+    observation, info = env.reset(seed=42)
+    frames = [env.render()]
+    commands = np.array([
+        [0.10, 0.00, 0.00],
+        [0.05, 0.00, 0.00],
+        [0.08, 0.04, 0.00],
+        [0.00, 0.00, 0.30],
+    ], dtype=np.float32)
+    for step in range(23):
+        action = commands if 4 <= step < 19 else np.zeros((4, 3), dtype=np.float32)
+        observation, reward, terminated, truncated, info = env.step(action)
+        frames.append(env.render())
+        if terminated or truncated:
+            break
+    print("4台の位置 [m]:", info["positions"])
+    print("4台の向き [rad]:", info["headings"])
+media.show_video(frames, fps=5)
 """,
     ),
     (
@@ -145,33 +156,44 @@ media.show_video(sim.frames, fps=5)
 
 | 環境 | 観測の形 | 行動の形 | 成功条件 |
 |---|---|---|---|
-| `ApproachEnv` | `(2, 10)` | `(2, 3)` | 両機が担当する押す位置・向きに整列 |
-| `HexapodPushEnv(flatten=False)` | `(台数, 20)` | `(台数, 3)` | Tの位置・向きが目標の許容範囲内 |
+| `HexapodApproach-v0` | `(2, 10)` | `(2, 3)` | 両機が担当する押す位置・向きに整列 |
+| `HexapodPush-v0` (`flatten=False`) | `(台数, 16 + 4×(台数−1))` | `(台数, 3)` | Tの位置・向きが目標の許容範囲内 |
 
 回り込みの各機の観測10成分は、T基準の位置2、向きのsin/cos 2、機体速度3、前回指令3です。
 担当する左右の位置を同じ役割として扱うため、左右方向を反転して共有actorへ入力します。
 回り込みの行動もこの反転座標の `[前後, 左右, 旋回]` で、各成分は−1〜1です。
 環境内部で各機の実際の方向に戻し、歩行APIと同じ物理速度の範囲へ変換します。
 
+**2台でも1つの相互作用する環境**として扱います。
+`step()` には2台分の行動をまとめて渡し、報酬はチーム全体の1つの値です。
+歩行環境は物理速度、学習用の回り込み・押す環境は−1〜1の正規化行動を使います。
+`action_space` でそれぞれの範囲を確認できます。
+
 `reset(seed=...)` が初期状態を作り、`step(action)` が0.2秒進めます。
-戻り値は次の観測・チーム報酬・終了・時間切れ・診断情報です。終了後は `reset()` します。
+戻り値は `observation, reward, terminated, truncated, info` です。
+`terminated` は成功や転倒などの終了、`truncated` は時間切れです。どちらかがTrueなら、そのエピソードを終えます。
+このセルでは1エピソードを2秒間進め、報酬の内訳を見てから動画を表示します。
+終了後に続けるには `reset()`、使い終わったら `close()`（`with` では自動）です。
 `info["reward_terms"]` は**このステップで実際に返した報酬の内訳**です。
 """,
     ),
     (
         "code",
-        r"""import numpy as np
-from hexapod_transport_rl import ApproachEnv, ApproachConfig
+        r"""from hexapod_transport_rl import ApproachConfig
 
-with ApproachEnv(ApproachConfig(layout="front"), render_mode="rgb_array") as env:
+config = ApproachConfig(layout="front", seconds=2.0)
+with gym.make("HexapodApproach-v0", config=config, render_mode="rgb_array") as env:
     observation, info = env.reset(seed=80000)
-    print("観測:", observation.shape, "行動:", env.action_space.shape)
-    action = np.zeros((2, 3), dtype=np.float32)
-    observation, reward, terminated, truncated, info = env.step(action)
-    print("チーム報酬:", reward)
-    print("内訳:", info["reward_terms"])
-    print("終了:", terminated, "時間切れ:", truncated)
-    media.show_image(env.render())
+    print("観測:", env.observation_space, "行動:", env.action_space)
+    frames = [env.render()]
+    terminated = truncated = False
+    while not (terminated or truncated):
+        action = np.zeros(env.action_space.shape, dtype=np.float32)
+        observation, reward, terminated, truncated, info = env.step(action)
+        frames.append(env.render())
+        print("チーム報酬:", reward, "内訳:", info["reward_terms"])
+    print("終了理由:", info["termination_reason"])
+media.show_video(frames, fps=5)
 """,
     ),
     (
@@ -240,7 +262,7 @@ conditions = {"baseline": baseline_config, "strong_contact": changed_config}
     (
         "code",
         r"""for name, config in conditions.items():
-    with ApproachEnv(replace(config, layout="front")) as env:
+    with gym.make("HexapodApproach-v0", config=replace(config, layout="front")) as env:
         env.reset(seed=80000)
         _, reward, _, _, info = env.step(np.zeros((2, 3), dtype=np.float32))
         print(name, "報酬:", reward, "内訳:", info["reward_terms"])
