@@ -47,6 +47,8 @@ APIは2〜4台を扱えますが、以下の実測・参考モデルは2台の�
         "markdown",
         r"""## 1. 教材と実行環境を準備する
 公開GitHubから取得します。認証は不要です。次の2セルはそのまま実行します。
+Colabの「ランタイム → ランタイムのタイプを変更」で **T4 GPU** を選びます。
+GPUが使えるとMAPPOの学習更新に自動で使い、使えない場合はCPUで実行します。
 既に取得したコードがある場合は、学生の編集を残すため再取得しません。新しい教材を使うときは新規ランタイムで始めます。
 """,
     ),
@@ -263,7 +265,8 @@ for name, config in conditions.items():
 
 学習量は**65,536チームステップ／条件**を初期値にします。学習時間は後のCSVで実測します。
 前の整列課題と違い、今回は押す・回転・停止を含めて新しく学習するので、前の成功率や時間は保証しません。
-学習中に描画せず、2並列のCPUシミュレーションを使います。GPUによる物理の高速化は組み込んでいません。
+学習中に描画せず、2並列のCPUシミュレーションを使います。MAPPOの学習更新には利用可能なGPUを使います。
+MuJoCoの物理計算はCPUなので、GPUを選んでも全体が同じ倍率で速くなるわけではありません。
 
 1チームステップは全機のいる世界を1回進めることです。`NUM_ENVS` はロボット台数ではなく並列世界数です。
 `TRAINING_STEPS` は `NUM_ENVS * HORIZON` の倍数で指定します。256ステップへの縮小はAPI接続確認用です。
@@ -319,6 +322,10 @@ media.show_video(iio.imread(next((RUN_DIR / "reference_video").glob("*.mp4"))), 
 `anneal_exploration()` は更新を終えてから、次の収集で使うノイズの上限を徐々に下げます。
 正規化行動の標準偏差の上限は約0.37から0.05になります。行動の平均は常にactorが学びます。
 `PoseCurriculum` は検証・難度の変更・ログだけを行い、行動を作ったりPPO更新を代行したりしません。
+`DEVICE` は学習先です。actor・critic・GAE・損失計算をGPUへ置きます。
+CollectorはCPU上の方策でMuJoCoを進め、収集した経験をまとめてGPUへ送ります。
+更新後は `update_policy_weights_()` で、登録済みactorの最新の重みをCollectorへ戻します。
+この分担で、物理計算の1ステップごとにGPUへデータを往復させずに済みます。
 保存する `.pt` には重み・optimizer・価値正規化の統計・報酬・到達段階・乱数状態が入ります。別の押すモデルは必要ありません。
 """,
     ),
@@ -336,6 +343,8 @@ settings = MAPPOSettings(
     learning_rate=3e-4, minibatch_size=128, value_normalization=True,
     entropy_coeff=0.001, final_log_std=-3.0,
 )
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("MAPPOの学習更新:", DEVICE, "/ MuJoCoの物理計算: cpu")
 FRAMES_PER_BATCH = NUM_ENVS * HORIZON
 models = {}
 for name, config in conditions.items():
@@ -344,6 +353,8 @@ for name, config in conditions.items():
     envs = TorchRLTransportEnv(config=config, num_envs=NUM_ENVS)
     envs.set_seed(TRAINING_SEED)
     actor, critic = make_mappo_networks(num_robots=envs.num_robots, obs_dim=envs.obs_dim)
+    actor.to(DEVICE)
+    critic.to(DEVICE)
     loss = make_mappo_loss(actor, critic, settings)
     optimizer = torch.optim.Adam(loss.parameters(), lr=settings.learning_rate)
     curriculum = PoseCurriculum(
@@ -357,13 +368,15 @@ for name, config in conditions.items():
     )
     collector = Collector(
         envs, actor, frames_per_batch=FRAMES_PER_BATCH, total_frames=TRAINING_STEPS,
-        device="cpu", auto_register_policy_transforms=True,
+        env_device="cpu", policy_device="cpu", storing_device="cpu",
+        auto_register_policy_transforms=True,
     )
     buffer = ReplayBuffer(
-        storage=LazyTensorStorage(FRAMES_PER_BATCH), sampler=SamplerWithoutReplacement(),
+        storage=LazyTensorStorage(FRAMES_PER_BATCH, device=DEVICE), sampler=SamplerWithoutReplacement(),
         batch_size=settings.minibatch_size,
     )
     for batch in collector:
+        batch = batch.to(DEVICE)
         loss.value_estimator(batch)
         buffer.empty()
         buffer.extend(batch.reshape(-1))

@@ -9,6 +9,8 @@
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_colab.ipynb)
 
 Googleアカウントでログインし、上から順に実行します。GitHubの認証は不要です。
+「ランタイム → ランタイムのタイプを変更」で **T4 GPU** を選んでください。
+利用可能なGPUをMAPPOの学習更新に使います。MuJoCoの物理計算はCPUで行います。
 コード・機体形状・歩行モデル・参考モデルは公開リポジトリから取得します。
 
 最初に学習済み歩行モデルへ速度指令を送り、GymnasiumのAPIを確認します。
@@ -61,6 +63,7 @@ criticは全機の観測を使い、報酬はチーム全体で1つです。機�
 
 - [APIガイド](docs/api.md)：歩行指令、観測、行動、成功判定、評価。
 - [Colabガイド](docs/colab-guide.md)：実験条件・保存・再開。
+- [GPUと学習時間](docs/gpu-training.md)：CPU物理・GPU更新の分担と実測。
 - [コードガイド](docs/code-guide.md)：環境・報酬・TorchRLの接続を読む順番。
 
 歩行APIは1〜4台、押すAPIは2〜4台です。今回の実測・参考モデルは2台の結果です。
@@ -79,6 +82,7 @@ MUJOCO_GL=egl uv run pytest -q
 ```
 
 ノートブックと同じPython APIが使えます。ローカルで描画する場合はEGL、Colabでは準備セルがOSMesaを設定します。
+`uv sync --locked`はローカル確認用のCPU版PyTorchを使います。Colabの準備セルはこのCPU指定を使わず、インストール済みのCUDA対応PyTorchを維持します。
 
 以前の`transport.pt`・`pusher.pt`・`lesson_transport.pt`は、旧形状のTで学習した歴史的なモデルです。
 旧モデルの再生は旧形状を明示して保持し、新しいTでの性能として扱いません。

@@ -7,6 +7,7 @@ import pytest
 import torch
 from gymnasium.utils.env_checker import check_env
 from torchrl.collectors import Collector
+from torchrl.data import LazyTensorStorage, ReplayBuffer
 
 from hexapod_transport_rl import (
     POSE_STAGES,
@@ -140,7 +141,20 @@ def test_pose_stage_changes_only_next_reset():
         env.close()
 
 
-def test_real_pose_update_save_relocation_and_four_robot_loading(tmp_path):
+@pytest.mark.parametrize(
+    "device",
+    [
+        "cpu",
+        pytest.param(
+            "cuda",
+            marks=pytest.mark.skipif(
+                not torch.cuda.is_available(),
+                reason="CUDA is unavailable",
+            ),
+        ),
+    ],
+)
+def test_real_pose_update_save_relocation_and_four_robot_loading(tmp_path, device):
     torch.set_num_threads(1)
     config = PosePushConfig(num_robots=4, episode_seconds=0.2)
     env = TorchRLTransportEnv(config, num_envs=2, asynchronous=False)
@@ -155,6 +169,8 @@ def test_real_pose_update_save_relocation_and_four_robot_loading(tmp_path):
     actor, critic = make_mappo_networks(
         env.num_robots, env.obs_dim, initial_log_std=settings.initial_log_std
     )
+    actor.to(device)
+    critic.to(device)
     loss = make_mappo_loss(actor, critic, settings)
     optimizer = torch.optim.Adam(loss.parameters(), lr=settings.learning_rate)
     curriculum = PoseCurriculum(
@@ -172,31 +188,47 @@ def test_real_pose_update_save_relocation_and_four_robot_loading(tmp_path):
         actor,
         frames_per_batch=4,
         total_frames=4,
-        device="cpu",
+        env_device="cpu",
+        policy_device="cpu",
+        storing_device="cpu",
         auto_register_policy_transforms=True,
     )
     try:
         batch = next(iter(collector))
+        assert batch.device == torch.device("cpu")
+        assert next(collector.policy.parameters()).device.type == "cpu"
+        assert next(actor.parameters()).device.type == device
+        batch = batch.to(device)
         loss.value_estimator(batch)
+        buffer = ReplayBuffer(storage=LazyTensorStorage(4, device=device), batch_size=4)
+        buffer.extend(batch.reshape(-1))
         previous = [p.detach().clone() for p in actor.parameters()]
-        metrics = loss(batch.reshape(-1))
+        metrics = loss(buffer.sample())
         objective = sum(
             metrics[k] for k in ("loss_objective", "loss_critic", "loss_entropy")
         )
         optimizer.zero_grad()
         objective.backward()
         optimizer.step()
+        assert next(actor.parameters()).grad.device.type == device
         assert any(
             not torch.equal(a, b)
             for a, b in zip(previous, actor.parameters(), strict=True)
         )
         curriculum.record(batch, metrics)
-        obs = batch["agents", "observation"][0, 0].numpy()
+        obs = batch["agents", "observation"][0, 0].cpu().numpy()
         before_annealing = policy_action(actor, obs)
         anneal_exploration(actor, settings, 0.5)
         np.testing.assert_array_equal(before_annealing, policy_action(actor, obs))
         scales = [m.log_std for m in actor.modules() if hasattr(m, "log_std")]
         assert len(scales) == 1 and scales[0].max() <= -2.25
+        collector.update_policy_weights_()
+        np.testing.assert_allclose(
+            policy_action(collector.policy, obs),
+            policy_action(actor, obs),
+            rtol=1e-5,
+            atol=1e-6,
+        )
         rng = torch.get_rng_state().clone()
         path = save_mappo(
             tmp_path / "pose.pt",
@@ -214,7 +246,17 @@ def test_real_pose_update_save_relocation_and_four_robot_loading(tmp_path):
         relocated = tmp_path / "relocated.pt"
         path.rename(relocated)
         loaded, loaded_critic, saved = load_mappo(relocated)
-        np.testing.assert_array_equal(expected, policy_action(loaded, obs))
+        np.testing.assert_allclose(
+            expected, policy_action(loaded, obs), rtol=1e-5, atol=1e-6
+        )
+        assert saved["training"]["learning_device"].startswith(device)
+        assert saved["training"]["physics_device"] == "cpu"
+        if device == "cuda":
+            torch.testing.assert_close(
+                saved["cuda_rng_state"], torch.cuda.get_rng_state()
+            )
+            reloaded_gpu, _, _ = load_mappo(relocated, device="cuda")
+            np.testing.assert_array_equal(expected, policy_action(reloaded_gpu, obs))
         assert saved["optimizer"]["state"] and "pushing_checkpoint" not in saved
         assert saved["num_robots"] == 4 and saved["obs_dim"] == 30
         restored_loss = make_mappo_loss(
@@ -225,7 +267,7 @@ def test_real_pose_update_save_relocation_and_four_robot_loading(tmp_path):
         )
         for key, value in loss.value_norm.state_dict().items():
             torch.testing.assert_close(
-                restored_loss.value_norm.state_dict()[key], value, rtol=0, atol=0
+                restored_loss.value_norm.state_dict()[key], value.cpu(), rtol=0, atol=0
             )
     finally:
         curriculum.close()

@@ -31,8 +31,10 @@ def prepare_colab(project_dir: str | Path) -> None:
             sys.executable,
             "--editable",
             str(project_dir),
+            # The local uv lock uses CPU Torch; Colab keeps its installed CUDA Torch.
+            "--no-sources",
             "--torch-backend",
-            "cpu",
+            "auto",
         ],
         check=True,
     )
@@ -52,4 +54,6 @@ def prepare_colab(project_dir: str | Path) -> None:
 
     torch.set_num_threads(1)
     media.set_ffmpeg(imageio_ffmpeg.get_ffmpeg_exe())
+    device = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
+    print(f"MAPPOの学習更新: {device} / MuJoCoの物理計算: CPU")
     print("準備完了。以降は通常のimportで環境・学習・評価APIを使います。")

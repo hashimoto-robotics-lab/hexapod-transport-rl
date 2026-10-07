@@ -1,6 +1,7 @@
 # Colabで報酬設計を比較する
 
-[学生用Colab](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_colab.ipynb)を新しいCPUランタイムで開き、上から実行します。
+[学生用Colab](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_colab.ipynb)を開き、「ランタイム → ランタイムのタイプを変更」で **T4 GPU** を選び、上から実行します。
+GPUが利用できればMAPPOの学習更新へ自動で使い、利用できなければCPUへ切り替えます。準備セルと学習セルが実際の学習先を表示します。
 GitHubの認証は不要です。既に取得したコードは学生の編集を残すため上書きしません。
 古い教材を使っている場合は、新規ランタイムで始めてください。
 
@@ -20,7 +21,12 @@ GitHubの認証は不要です。既に取得したコードは学生の編集�
 256ステップに減らす場合は接続確認だけで、成功する学習とは区別します。
 criticの価値正規化と、探索ノイズ上限を約0.37から0.05へ下げる設定を使います。
 ノイズの変更はPPO更新後・次の収集前に行い、actorが学ぶ行動の平均を変更しません。
-GPUによるMuJoCoの高速化は組み込んでいません。学習中は描画せず、評価時にだけ録画します。
+MuJoCoの物理計算とCollectorの方策実行はCPU、actor・criticの学習、GAE、ミニバッチはGPUに置きます。
+経験はロールアウトごとにまとめてGPUへ送り、更新後にCollectorのCPU方策へ重みを戻します。
+価値正規化の統計もGPUへ移します。GPUによるMuJoCoの高速化は組み込んでいません。
+物理計算が全体の多くを占めるため、小さなネットワークではGPUを選んでも必ず速くなるとは限りません。
+学習中は描画せず、評価時にだけ録画します。
+[CPU/GPUの分担と時間の比較](gpu-training.md)に実測条件を記録しています。
 
 両条件は同じ初期重み・seed・物理・学習量・段階移行の規則を使います。
 角度の補助報酬だけを0にし、角度の成功判定は共通に残します。
@@ -46,7 +52,8 @@ GPUによるMuJoCoの高速化は組み込んでいません。学習中は描�
 各条件に`run.json`、`initial.pt`、`progress.csv`、`curriculum.json`、途中checkpoint、最後の`pose.pt`が入ります。
 評価JSON・比較CSV・図・動画も同じ結果フォルダへ保存し、最後にZIPを作ります。
 
-`pose.pt`はactor・critic・optimizer・価値正規化の統計・設定・段階・PyTorchの乱数状態を含み、別の押すモデルは必要ありません。
+`pose.pt`はactor・critic・optimizer・価値正規化の統計・設定・段階・CPUと使用したGPUのPyTorch乱数状態を含み、別の押すモデルは必要ありません。
+`run.json`には学習先・GPU名・物理計算先を記録します。GPUで保存したモデルもCPUで再生できます。
 結果フォルダを移動しても読み込めます。同梱の参考モデルは参考再生専用で、自分の学習には使いません。
 未保存の結果はランタイム削除で失われます。本実験では途中checkpointもDrive等へ保存します。
 
@@ -59,7 +66,8 @@ from hexapod_transport_rl import (
     TorchRLTransportEnv, MAPPOSettings, make_mappo_loss,
 )
 
-actor, critic, saved = load_mappo("runs/pose_reward_trial_01/baseline/pose.pt")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+actor, critic, saved = load_mappo("runs/pose_reward_trial_01/baseline/pose.pt", device=device)
 config = PosePushConfig(**saved["pose_config"])
 settings = MAPPOSettings(**saved["training"]["settings"])
 loss = make_mappo_loss(
@@ -80,6 +88,8 @@ curriculum = PoseCurriculum(
     advance_threshold=saved["training"]["advance_threshold"], resume=saved,
 )
 torch.set_rng_state(saved["torch_rng_state"])
+if device.type == "cuda" and saved.get("cuda_rng_state") is not None:
+    torch.cuda.set_rng_state(saved["cuda_rng_state"], device)
 ```
 
 この後はノートブックと同じCollector・buffer・更新ループを使います。

@@ -115,7 +115,7 @@ def make_mappo_loss(
         value_target=("agents", "value_target"),
     )
     loss.make_value_estimator(gamma=settings.gamma, lmbda=settings.gae_lambda)
-    return loss
+    return loss.to(next(actor.parameters()).device)
 
 
 class SharedScale(nn.Module):
@@ -200,7 +200,15 @@ def policy_action(actor, observation) -> np.ndarray:
     This keeps evaluation actions bounded without adding any navigation rules.
     """
     td = TensorDict(
-        {"agents": {"observation": torch.as_tensor(observation, dtype=torch.float32)}},
+        {
+            "agents": {
+                "observation": torch.as_tensor(
+                    observation,
+                    dtype=torch.float32,
+                    device=next(actor.parameters()).device,
+                )
+            }
+        },
         batch_size=list(np.shape(observation)[:-2]),
     )
     return actor.get_dist(td).deterministic_sample.cpu().numpy()
@@ -264,6 +272,11 @@ def save_mappo(
         curriculum=curriculum,
         run=dict(provenance=provenance, algorithm="TorchRL MAPPO"),
         torch_rng_state=torch.get_rng_state(),
+        cuda_rng_state=(
+            torch.cuda.get_rng_state(next(actor.parameters()).device)
+            if next(actor.parameters()).is_cuda
+            else None
+        ),
         value_normalizer=None if normalizer is None else normalizer.state_dict(),
         **extra,
     )
@@ -274,7 +287,7 @@ def save_mappo(
     return path
 
 
-def load_mappo(path: str | Path):
+def load_mappo(path: str | Path, *, device="cpu"):
     """Load TorchRL weights and metadata; historical approach files verify their pusher."""
     path = Path(path).resolve()
     saved = torch.load(path, weights_only=True, map_location="cpu")
@@ -304,7 +317,7 @@ def load_mappo(path: str | Path):
         for v in model.state_dict().values()
     ):
         raise ValueError("Non-finite MAPPO weights")
-    return actor.eval(), critic.eval(), saved
+    return actor.to(device).eval(), critic.to(device).eval(), saved
 
 
 class TorchRLNavigator:

@@ -146,3 +146,9 @@ def test_reward_parameters_flow_directly_to_training_and_paired_evaluation():
     assert 'gym.make("HexapodPosePush-v0"' in source
     assert "comparison.to_csv" in source
     assert "media.show_videos" in source
+    assert 'torch.device("cuda" if torch.cuda.is_available() else "cpu")' in source
+    assert "actor.to(DEVICE)" in source and "critic.to(DEVICE)" in source
+    assert "batch = batch.to(DEVICE)" in source
+    assert "LazyTensorStorage(FRAMES_PER_BATCH, device=DEVICE)" in source
+    assert 'policy_device="cpu"' in source
+    assert "collector.update_policy_weights_()" in source

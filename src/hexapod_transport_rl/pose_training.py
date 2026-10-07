@@ -3,10 +3,12 @@
 import csv
 import json
 import time
+from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
+import torch
 import torchrl
 
 from .pose_push import POSE_STAGES, PosePushConfig, make_pose_vector
@@ -58,6 +60,14 @@ class PoseCurriculum:
         self.training = dict(
             algorithm="TorchRL MAPPO; shared local actor, central critic, per-agent ratios",
             torchrl=torchrl.__version__,
+            torch=str(torch.__version__),
+            learning_device=str(next(actor.parameters()).device),
+            learning_gpu=(
+                torch.cuda.get_device_name(next(actor.parameters()).device)
+                if next(actor.parameters()).is_cuda
+                else None
+            ),
+            physics_device="cpu",
             seed=seed,
             num_envs=env.worlds.num_envs,
             horizon=horizon,
@@ -105,6 +115,12 @@ class PoseCurriculum:
         )
 
     def _validate(self):
+        # Validation advances CPU physics step by step; copy current weights once.
+        actor = (
+            deepcopy(self.actor).cpu()
+            if next(self.actor.parameters()).is_cuda
+            else self.actor
+        )
         if self.validation_env is None:
             self.validation_env = make_pose_vector(
                 self.config,
@@ -119,7 +135,7 @@ class PoseCurriculum:
             finished = np.zeros(self.validation_env.num_envs, dtype=bool)
             while not finished.all():
                 obs, _, terminated, truncated, info = self.validation_env.step(
-                    policy_action(self.actor, obs)
+                    policy_action(actor, obs)
                 )
                 done = terminated | truncated
                 for lane in np.flatnonzero(done & ~finished):

@@ -137,7 +137,10 @@ actorは局所観測、criticは全機の観測を使います。報酬はチー
 価値正規化を使うときは`loss=loss`も渡し、再開用の統計を保存します。
 `anneal_exploration(actor, settings, progress)`はPPO更新後に呼び、次の収集で使う
 探索ノイズの上限を下げます。`progress`は総学習予算に対する収集済みの割合です。
-`load_mappo()`は保存した機体数と観測の形を復元します。旧モデルとの重みの相互変換は行いません。
+`load_mappo()`は保存した機体数と観測の形を復元し、標準ではCPUへ読み込みます。
+GPUで学習を再開するときは`load_mappo(path, device="cuda")`を使えます。
+`policy_action()`はactorの置かれたCPU/GPUへ観測を送り、Gymnasium用のNumPy行動を返します。
+旧モデルとの重みの相互変換は行いません。
 
 ## 未使用seedで評価・録画
 
