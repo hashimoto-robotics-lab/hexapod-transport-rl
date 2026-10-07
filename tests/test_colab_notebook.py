@@ -131,9 +131,11 @@ def test_reward_parameters_flow_directly_to_training_and_paired_evaluation():
         cell.source for cell in notebook.cells if cell.cell_type == "code"
     )
     assert "config=config" in source
-    assert "from stable_baselines3 import PPO" in source
-    assert "model.learn(total_timesteps=TRAINING_STEPS" in source
-    assert "model.save(" in source
+    assert "from torchrl.collectors import Collector" in source
+    assert "total_frames=TRAINING_STEPS" in source
+    assert "make_mappo_loss(actor, critic, settings)" in source
+    assert "buffer.empty()" in source
+    assert "save_mappo(" in source
     assert "train_approach(" not in source
     assert "reward_weights=changed_reward" in source
     assert "seed=TRAINING_SEED" in source

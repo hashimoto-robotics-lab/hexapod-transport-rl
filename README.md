@@ -2,7 +2,7 @@
 
 **六足ロボットの強化学習による協調物資運搬**を学ぶ卒業研究向けプロジェクトです。
 2台がT字物体の周囲を回り込み、脚・足の接触で目標へ運搬します。
-学生の学習にはStable-Baselines3のPPOを使い、actorを各機で共有・criticはチーム全体の観測を入力します。
+学生の学習にはTorchRLのMAPPOを使い、actorを各機で共有・criticはチーム全体の観測を入力します。
 歩行モデルは固定し、報酬だけから学習します。
 
 ## Google Colabで始める
@@ -18,27 +18,23 @@
 観測・行動の形はspaces、報酬の内訳は `info["reward_terms"]` で確認します。
 **報酬係数を1つ変え、同じ条件で学習し、同じ評価seedで図・動画を比較する**教材です。
 
-```python
-import gymnasium as gym
-from stable_baselines3 import PPO
-from dataclasses import replace
-from hexapod_transport_rl import ApproachConfig, ApproachRewardWeights, SharedTeamPolicy
+学習では次の部品を組み合わせます。
 
-reward = replace(ApproachRewardWeights(), robot_contact=12.0)
-env = gym.make(
-    "HexapodApproach-v0",
-    config=ApproachConfig(layout="near", reward_weights=reward), flatten=True,
+```python
+from hexapod_transport_rl import (
+    ApproachConfig, TorchRLTransportEnv, MAPPOSettings,
+    make_mappo_networks, make_mappo_loss,
 )
-model = PPO(SharedTeamPolicy, env, n_steps=64, batch_size=64, device="cpu", seed=42)
-model.learn(total_timesteps=256)
-model.save("navigation")
-env.close()
+
+envs = TorchRLTransportEnv(ApproachConfig(layout="near"), num_envs=2)
+actor, critic = make_mappo_networks()
+loss = make_mappo_loss(actor, critic, MAPPOSettings())  # TorchRLのMAPPOLoss
 ```
 
-学習は `PPO(...).learn(...)`、保存は `model.save()`、行動は `model.predict()` を使います。
-経験収集・GAE・PPOの更新は外部ライブラリが担当します。ノートブックでは別プロセスの物理世界を並列実行し、
-初期配置のカリキュラムだけをSB3のcallbackで調整します。
-この短いコード例は近い配置の動作確認です。段階的な学習と報酬の比較はノートブックにあります。
+これは学習の準備部分です。ノートブックではTorchRLの `Collector` で経験を集め、
+`loss.value_estimator()` でGAE、`loss(minibatch)` でMAPPO損失を計算し、PyTorchのoptimizerで更新します。
+機体別の確率比をclipし、`TanhNormal` で行動を−1〜1に収めます。初期配置だけをカリキュラムで調整します。
+収集した経験はロールアウトごとに置き換え、過去の経験を混ぜません。
 回り込みの報酬を比較する際は、歩行モデルと押す方策を共通に固定します。デモは教師に使いません。
 動画はmediapyで表示します。準備補助はインストールだけ、保存補助は記録とZIP作成だけを担当します。
 最初の256チームステップ／条件は動作確認です。本学習の目安は409,600ステップ／条件で、
@@ -84,9 +80,9 @@ uv sync --locked
 | `checkpoints/pusher.pt` | 回り込み後の位置へ適応させた押す方策 |
 | `checkpoints/base_pusher.pt` | 回り込み・引き継ぎ学習の初期値として使う押す方策 |
 
-同梱モデルは以前の独自MAPPO実装で学習したものです。SB3の新規学習には読み込まず、参考再生と共通の押す方策に使います。
-SB3の結合行動の確率比・Gaussian行動のclipと、以前の機体別の確率比・tanh変換は異なります。
-同じ学習量・seedでも同じ結果になる保証はありません。
+同梱モデルは以前の独自MAPPO実装で学習したものです。新しいTorchRLの回り込み学習はランダム初期化し、
+旧モデルは参考再生と共通の押す方策に使います。新しい保存形式とは互換ではありません。
+機体別の確率比・tanh変換という構成は共通ですが、初期化や細部の設定が違うため同じ結果になる保証はありません。
 
 保存モデルを未使用の前方100条件・側方50条件で評価した結果は、運搬成功85/100・40/50でした。
 回り込み・整列は150/150、胴体とTの接触・転倒・回り込み中の機体同士の接触はゼロでした。
@@ -102,8 +98,9 @@ SB3の結合行動の確率比・Gaussian行動のclipと、以前の機体別�
 ```text
 notebooks/hexapod_transport_rl_colab.ipynb  学生向けの入口
 src/hexapod_transport_rl/                 学習・環境・評価
-  sb3_policy.py                         共有actor・中央criticの構造（更新はSB3）
-  sb3_training.py                       初期配置callback・運搬モデルの記録
+  torchrl_env.py                        MuJoCoのGymnasium環境をTorchRLへ接続
+  torchrl_mappo.py                      TorchRLのネットワーク・損失設定・モデル保存
+  torchrl_training.py                   初期配置のカリキュラム・学習ログ
   walking_env.py                        Gymnasium：1〜4台への速度指令
   walking.py                            共通の歩行シミュレーション
   locomotion.py                         歩行・運搬で共通の固定歩行モデル

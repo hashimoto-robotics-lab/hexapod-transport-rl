@@ -148,7 +148,7 @@ env.close()
 観測 `(B, 2, 20)`、行動 `(B, 2, 3)`、報酬 `(B,)` になります。
 回り込み学習は `make_approach_vector()` を使い、観測が `(B, 2, 10)` になります。
 終了した世界だけ `reset(options={"reset_mask": terminated | truncated})` でリセットします。
-reset前に最終観測から価値を計算する処理は `mappo.py` に共通化しています。
+学生のTorchRL学習は最終観測を保ったままGAEを計算します。旧CLIの同じ処理は `mappo.py` にあります。
 
 別プロセスを使う自作スクリプトでは `if __name__ == "__main__":` で起動処理を囲み、最後に `close()` を呼んでください。
 `HexapodPushEnv(render_mode="rgb_array")` はRGB画像、`render_mode="human"` はGUIを提供します。
@@ -173,9 +173,9 @@ env.close()
 回り込みの観測は `(2, 10)`、行動は `(2, 3)` の−1〜1です。
 担当する左右の役割を反転した座標で行動を出し、内部で実際の機体速度へ戻します。
 中央critic用の `env.unwrapped.state()` は両機の観測を並べた `(20,)` です。
-学生の学習では、同じ設定をSB3の `make_vec_env(..., env_kwargs={"config": config, "flatten": True})` へ渡します。
-更新は `PPO(SharedTeamPolicy, envs, ...).learn(total_timesteps=...)` が担当します。
-モデルは `model.save()` で `.zip` に保存し、`bind_transport()` で報酬設定・共通の押すモデル・資産ハッシュを記録します。
+学生の学習では、同じ設定を `TorchRLTransportEnv(config, num_envs=...)` へ渡します。
+`make_mappo_loss(actor, critic, settings)` はTorchRLの `MAPPOLoss` と `MultiAgentGAE` を設定します。
+`save_mappo()` は回り込みの重み・optimizer・報酬設定・共通の押すモデルへの相対パスとハッシュを保存します。
 旧MAPPOモデルの読み込みは従来の既定値を補います。
 式は `rewards.approach_reward_terms()`、押す報酬は `PushConfig(reward_weights=PushRewardWeights(...))` で設定します。
 
@@ -183,35 +183,67 @@ env.close()
 回り込みから押すまでを評価し、物理的な成功・接触・転倒・誤差をJSONに保存して辞書を返します。
 異なる報酬の実験同士を比較するときは、総報酬ではなくこれらの指標を使います。
 
-## 外部ライブラリでの学習
+## TorchRLのMAPPOへの接続
 
 ```python
-from stable_baselines3 import PPO
-from hexapod_transport_rl import SharedTeamPolicy
+from hexapod_transport_rl import (
+    TorchRLTransportEnv, MAPPOSettings, make_mappo_networks, make_mappo_loss,
+)
 
-env = gym.make("HexapodApproach-v0", config=config, flatten=True)
-model = PPO(SharedTeamPolicy, env, n_steps=64, batch_size=64, device="cpu", seed=42)
-model.learn(total_timesteps=256)
-model.save("navigator")
+envs = TorchRLTransportEnv(config, num_envs=2)
+envs.set_seed(42)
+actor, critic = make_mappo_networks(num_robots=envs.num_robots, obs_dim=envs.obs_dim)
+loss = make_mappo_loss(actor, critic, MAPPOSettings())
+```
+
+`TorchRLTransportEnv` は物理計算を変更しません。既存のGymnasium並列環境をTorchRLの `EnvBase` に接続します。
+`asynchronous=True` の既定ではspawnワーカー、`False` では同期実行です。物理計算と方策はCPUで動きます。
+`num_envs` は独立した世界の数、`num_robots` は各世界にいる機体数です。
+
+| TorchRLのキー | 形（B世界、N機、D次元の観測） | 意味 |
+|---|---|---|
+| `("agents", "observation")` | `(B,N,D)` | 各機の局所観測 |
+| `("agents", "action")` | `(B,N,3)` | 各機の正規化速度指令 |
+| `reward` | `(B,1)` | チーム共通の報酬 |
+| `done` / `terminated` / `truncated` | `(B,1)` | 世界ごとの終了フラグ |
+| `success` | `(B,1)` | 物理的な成功の診断 |
+
+TorchRLは名前付きの配列を `TensorDict` に格納します。`Collector` が返す経験には時間軸Tが加わり、
+バッチは `(B,T)`、観測は `(B,T,N,D)` になります。`batch.numel()` はチームステップ数で、機体数は掛けません。
+
+`make_mappo_networks()` はTorchRLの `MultiAgentMLP` を使います。actorは局所観測・共有重み、
+criticは全機の観測・共有重みです。探索幅3成分も共有します。`TanhNormal(event_dims=1)` により
+3成分を1機分の行動として扱い、確率比は機体別に計算します。
+`MAPPOLoss` の `MultiAgentGAE` がチーム報酬・終了を各機へ展開します。
+時間切れではreset前の最終観測の価値を使い、成功・転倒では使いません。GAEはエピソード境界を越えて伝播しません。
+損失・GAE・経験収集・ミニバッチの抽出はTorchRL、勾配更新はPyTorchです。
+
+ノートブックには `Collector` → GAE → 現在の経験を `ReplayBuffer` に格納 → ミニバッチの更新を
+直接書いています。このbufferは毎ロールアウト空にし、過去の経験を再利用する学習にはしません。
+`MAPPOSettings` が学習率・epochs・minibatch・clip幅・損失係数などの共通設定です。
+
+`ApproachCurriculum(config, env, actor, output, seed=..., settings=..., horizon=...)` は配置と記録だけを担当します。
+更新後の `record(batch, metrics)` で50ロールアウトごとに別seedで検証し、
+成功率75%以上・段階内50ロールアウト以上で `near → rear → side → front` に進みます。
+変更は後続のresetへ適用され、進行中のエピソードは維持します。検証経験は学習へ渡しません。
+
+## TorchRLの保存モデルでGymnasiumを操作する
+
+```python
+from hexapod_transport_rl import load_mappo, policy_action
+
+actor, critic, saved = load_mappo("runs/reward_trial_01/baseline/transport.pt")
+env = gym.make("HexapodApproach-v0", config=ApproachConfig(**saved["approach_config"]))
 observation, info = env.reset(seed=80000)
-action, _ = model.predict(observation, deterministic=True)
+action = policy_action(actor, observation)  # (2,3)、評価用のtanh(loc)
 observation, reward, terminated, truncated, info = env.step(action)
 env.close()
 ```
 
-`SharedTeamPolicy` はネットワークの構造だけを指定します。actorは各機の局所観測で同じMLPを使い、
-探索の標準偏差3成分も共有します。criticは全機の観測を入力します。
-SB3の `MlpPolicy` をそのまま使うと、チーム全体の観測から全行動を出す中央actorになるため、この構造とは異なります。
-
-学生の並列学習はSB3の `make_vec_env()` と `SubprocVecEnv(start_method="spawn")` を使います。
-通常のGymnasium環境と異なり、SB3のVecEnvは `reset()` で観測のみ、`step()` で観測・報酬・done・infosを返し、
-終了した世界を自動resetします。学生の環境操作セルは通常のGymnasium API、
-並列学習の収集と時間切れの価値計算はSB3が担当します。
-
-`ApproachCurriculum` は初期配置と検証だけを扱うSB3 callbackです。
-`bind_transport(navigator_zip, pusher_pt, output_json, config=..., provenance=...)` は
-学習を行わず、運搬再生に必要な2モデルと設定を記録します。パスはJSONからの相対パスなので移動できます。
-JSONを `evaluate_transport(checkpoint=..., ...)` へ渡すと、新しいSB3回り込みモデルと共通の押す方策で評価します。
-
-同梱の旧MAPPO `.pt` はSB3の `.zip` と互換ではありません。学習済み歩行モデルと押す方策を固定し、
-回り込みactorをSB3でランダム初期化します。旧モデルは参考再生のために残しています。
+`policy_action()` はTorchRLのactorから決定的な行動を取り出すだけで、回り込みのルールを追加しません。
+`save_mappo(path, actor, critic, optimizer, config=..., pushing_checkpoint=..., provenance=..., training=..., curriculum=...)`
+が運搬再生用の `.pt` を保存します。固定押すモデルを相対パスで記録するため、結果フォルダ全体を移動できます。
+`evaluate_transport(checkpoint=..., ...)` は新形式と同梱の旧形式を判別し、同じ物理条件で運搬を評価します。
+旧形式の重みを新しいTorchRLネットワークへ直接読み込むことはしません。
+学習が終了したら `curriculum.close()` と `collector.shutdown()` を呼びます。
+Collectorが環境も閉じるため、別途 `envs.close()` を重ねて呼ぶ必要はありません。

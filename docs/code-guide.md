@@ -3,19 +3,21 @@
 歩行コマンドの使い方は [APIガイド](api.md) を参照してください。`walking_env.py` がGymnasium形式の学生向け操作、`walking.py` が共通の歩行シミュレーション、
 `locomotion.py` が歩行と運搬で共通の固定モデル・モーター制御です。
 
-学生の学習はStable-Baselines3の `PPO.learn()` を使います。
-環境・報酬を読んだ後、ネットワークの構造と初期配置callbackを確認してください。
+学生の学習はTorchRLのMAPPOを使います。
+環境・報酬を読んだ後、TorchRLへの接続、ネットワーク、配置カリキュラムを確認してください。
 
 | 順番 | ファイル | 読む内容 |
 |---|---|---|
 | 1 | `approach.py` | 回り込みのGymnasium API、観測・行動・整列条件 |
 | 2 | `rewards.py` | 報酬係数と実際に使う式 |
-| 3 | `sb3_policy.py` | 各機の局所観測を使う共有actor、全観測を使うcritic |
-| 4 | `sb3_training.py` | SB3 callbackによる検証・初期配置の難度変更、モデルの結合情報 |
-| 5 | `approach_evaluation.py` | 回り込みから固定押す方策への切り替え、評価・動画 |
-| 6 | `env.py` | 固定歩行モデル、接触計測と物理シミュレーション |
+| 3 | `torchrl_env.py` | Gymnasiumの物理世界をTorchRLのTensorDictへ接続 |
+| 4 | `torchrl_mappo.py` | 共有actor・中央critic、MAPPOLossの設定、モデル保存 |
+| 5 | `torchrl_training.py` | 検証、初期配置の難度変更、学習ログ |
+| 6 | `approach_evaluation.py` | 回り込みから固定押す方策への切り替え、評価・動画 |
+| 7 | `env.py` | 固定歩行モデル、接触計測と物理シミュレーション |
 
-`sb3_policy.py` は層の構造と共通の探索幅を指定するだけです。PPO損失、GAE、optimizerの更新を実装しません。
+`torchrl_mappo.py` はライブラリのネットワーク・MAPPOLoss・GAEを設定し、保存と推論を扱います。
+独自のPPO損失やGAEは実装しません。収集・更新ループはノートブックから直接読み、PyTorchのoptimizerを使います。
 `mappo.py` と `approach_training.py` は以前のMAPPOモデルの読み込み・再学習用です。
 学生の新しい比較学習はこれらの更新ループを使いません。
 
@@ -27,16 +29,17 @@
 | 押す動作の報酬 | `rewards.py` の `PushRewardWeights` と `env.py` の `_reward_terms()` |
 | 初期配置 | `approach.py` の `ApproachConfig` と `_sample_start_pose()` |
 | 回り込みから押す動作へ移る条件 | `approach.py` の `HANDOVER_*` と `approach_ready()` |
-| 学習率・PPOのclip幅・各損失の係数 | ノートブックの `PPO(...)` の引数 |
-| 初期配置の難度を上げる条件 | `sb3_training.py` の `ApproachCurriculum` |
+| 学習率・PPOのclip幅・各損失の係数 | `torchrl_mappo.py` の `MAPPOSettings` |
+| 初期配置の難度を上げる条件 | `torchrl_training.py` の `ApproachCurriculum` |
 
 既定値は従来の成功した学習と同じです。係数は各環境の設定に渡し、保存モデルにも記録します。
 関数の式を編集した場合は新しいランタイム・新しい実験名で学習します。
-旧MAPPOの保存モデルは従来の形式で読み込みます。新しいSB3モデルは `.zip` に保存します。
+旧MAPPOの保存モデルは従来の形式で読み込みます。新しいTorchRLモデルも `.pt` に保存しますが、
+形式名を分け、actor・critic・optimizer・報酬・カリキュラムを記録します。重みは相互互換ではありません。
 
 ## 学生の比較実験
 
-学生用ノートブックは、環境操作・報酬設定・SB3の `PPO.learn()`・`evaluate_transport()` を
+学生用ノートブックは、環境操作・報酬設定・TorchRLの経験収集とMAPPO更新・`evaluate_transport()` を
 通常のPythonコードで直接呼び出します。報酬は `ApproachConfig(reward_weights=...)` へ渡します。
 `ApproachEnv.step()` は `rewards.py` の関数を使い、返した報酬と同じ内訳を `info["reward_terms"]` に格納します。
 

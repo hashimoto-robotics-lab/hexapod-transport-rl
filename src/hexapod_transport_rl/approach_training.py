@@ -17,7 +17,7 @@ from gymnasium.vector import VectorEnv
 
 from .approach import CURRICULUM_LAYOUTS, OBS_DIM, ApproachConfig, make_approach_vector
 from .mappo import MAPPO, PPO_SETTINGS, collect_rollout, load_checkpoint, update_policy
-from .types import Info
+from .types import AgentPolicy, Info
 
 FORMAT = "hexapod-approach-mappo-v1"
 LEGACY_FORMAT = "sixtrail-approach-mappo-v1"
@@ -28,13 +28,13 @@ VALIDATION_SEED_STRIDE = 1000
 CHECKPOINT_INTERVAL = 25
 
 
-def load_approach_checkpoint(path: str | Path) -> tuple[MAPPO, MAPPO, Info]:
+def load_approach_checkpoint(path: str | Path) -> tuple[AgentPolicy, MAPPO, Info]:
     """回り込みと押す方策を読み込み、形式とSHA-256を確認する。"""
-    if Path(path).suffix == ".json":
-        from .sb3_training import load_sb3_transport
-
-        return load_sb3_transport(path)
     saved = torch.load(path, weights_only=True, map_location="cpu")
+    if saved.get("format") == "hexapod-approach-torchrl-mappo-v1":
+        from .torchrl_mappo import load_torchrl_transport
+
+        return load_torchrl_transport(path)
     if (
         saved.get("format") not in (FORMAT, LEGACY_FORMAT)
         or saved.get("obs_dim") != OBS_DIM

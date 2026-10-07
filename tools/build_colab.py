@@ -28,15 +28,16 @@ Tとロボットの状態 → 上位方策 → 各機の速度指令 → 固定�
         └──────────────── 次の状態とチーム報酬 ────────────────────┘
 ```
 
-上位方策は **Stable-Baselines3のPPO** で学習します。
+上位方策は **TorchRLのMAPPO** で学習します。
 各機の観測だけを見るactorの重みを共有し、criticはチーム全体の観測を見ます。
-このネットワーク構造を `SharedTeamPolicy` で指定し、経験収集・GAE・PPO更新は外部ライブラリに任せます。
+ネットワークには `MultiAgentMLP`、経験収集には `Collector`、更新には `MAPPOLoss` を使います。
+GAEとPPO損失の計算はTorchRLに任せ、ノートブックには収集・更新のループを普通のPythonで書きます。
 デモを教師にせず、報酬から学びます。
 
 同梱の参考モデルは以前のMAPPO実装で学習したものです。
-SB3はチームの結合行動の確率比を使い、旧実装は各機の比を個別にclipします。
-また、SB3はGaussian行動を範囲内へclipし、旧実装はtanh変換します。
-**ネットワーク構造は共通でも更新方法が違うため、同じ学習結果になる保証はありません。**
+新しい学習も機体別の確率比をclipし、`TanhNormal` で行動を−1〜1に収めます。
+ただしライブラリ・初期化・細部の設定が違うため、以前と同じ成功率になる保証はありません。
+歩行モデルと押す方策を固定し、回り込みactorを新しく学習します。
 まず2台で報酬の比較実験を行います。歩行APIは1〜4台、押す環境は2〜4台に対応しますが、
 **この回り込みカリキュラムと同梱の運搬モデルは2台用**です。4台の運搬性能は、別途環境拡張と学習で検証します。
 
@@ -286,15 +287,15 @@ conditions = {"baseline": baseline_config, "strong_contact": changed_config}
 両条件とも回り込みactorは同じseedでランダム初期化します。
 歩行モデル・押すモデル・物理条件・学習量・PPOの設定・カリキュラムの規則を共通にします。
 近い配置 → 後方 → 側方 → 前方と進み、検証成功率75%以上・各段階50ロールアウト以上で難度が上がります。
-`ApproachCurriculum` はSB3のcallbackで、50ロールアウトごとに学習済み方策を別の検証seedで評価します。
-検証はそのロールアウトのPPO更新前に行います。難度変更は次のエピソードのresetから適用します。
-このcallbackは環境の初期配置だけを変更し、学習の更新処理は `model.learn()` が担当します。
+`ApproachCurriculum` は50ロールアウトごとに、更新後の方策を別の検証seedで評価します。
+難度変更は次のエピソードのresetから適用し、現在進行中のエピソードは最後まで進めます。
+この補助クラスは配置の変更と記録だけを行い、学習の損失を計算したり行動を指定したりしません。
 報酬によって進む段階が変わる可能性があるため、到達段階もログで確認してください。
 
 初期値の **256チームステップ／条件は動作確認だけ**です。運搬成功を期待する学習量ではありません。
 一巡できたら、新しい `EXPERIMENT_NAME` と `TRAINING_STEPS = 409600` を設定して本学習します。
 1チームステップは「2台のいる世界を1回進める」ことです。並列数×horizonが1ロールアウトの収集量です。
-`TRAINING_STEPS` は `NUM_ENVS * HORIZON` の倍数で指定します。SB3はロールアウト単位で収集するため、
+`TRAINING_STEPS` は `NUM_ENVS * HORIZON` の倍数で指定します。TorchRLはロールアウト単位で収集するため、
 端数を指定すると実際の収集量は切り上がります。
 `NUM_ENVS` は独立した世界の数で、ロボット台数ではありません。
 学習中は描画せず、CPUの並列シミュレーションを使います。
@@ -342,59 +343,99 @@ media.show_video(iio.imread(next((RUN_DIR / "reference_video").glob("*.mp4"))), 
 """,
     ),
     (
-        "code",
-        r"""from stable_baselines3 import PPO
-from stable_baselines3.common.env_util import make_vec_env
-from stable_baselines3.common.vec_env import SubprocVecEnv
-from stable_baselines3.common.callbacks import CheckpointCallback
-from stable_baselines3.common.logger import configure
-from hexapod_transport_rl import SharedTeamPolicy, ApproachCurriculum, bind_transport
+        "markdown",
+        r"""### TorchRLで経験を集め、MAPPOで更新する
+`TorchRLTransportEnv` は先ほどのGymnasium環境をTorchRLへ接続します。物理や報酬は同じです。
+TorchRLは名前付き配列を `TensorDict` にまとめます。`batch` の観測は
+`(並列世界, 時間, ロボット, 観測成分)`、行動もロボット別です。
 
+`make_mappo_networks()` は共有actor・中央critic、`make_mappo_loss()` はTorchRLの `MAPPOLoss` とGAEを設定します。
+`MAPPOSettings` に学習率・更新回数などをまとめ、両条件で同じ設定を使います。
+下のループは **収集 → GAE → ミニバッチ更新 → 記録** の順です。
+`ReplayBuffer` は今回の経験を混ぜてミニバッチにするために使い、毎ロールアウト空にします。
+時間切れでは最終観測の価値を使い、成功・転倒では使いません。終了した世界のresetはCollectorが行います。
+保存する `.pt` には重み・optimizer・報酬・到達段階・共通の押すモデルの情報が入ります。
+""",
+    ),
+    (
+        "code",
+        r"""import torch
+from torchrl.collectors import Collector
+from torchrl.data import ReplayBuffer, LazyTensorStorage, SamplerWithoutReplacement
+from hexapod_transport_rl import (
+    TorchRLTransportEnv, MAPPOSettings, make_mappo_networks, make_mappo_loss,
+    ApproachCurriculum, save_mappo,
+)
+
+settings = MAPPOSettings()
+FRAMES_PER_BATCH = NUM_ENVS * HORIZON
 models = {}
 for name, config in conditions.items():
+    torch.manual_seed(TRAINING_SEED)
     output = RUN_DIR / name
-    envs = make_vec_env(
-        "hexapod_transport_rl:HexapodApproach-v0",
-        n_envs=NUM_ENVS, seed=TRAINING_SEED,
-        env_kwargs={"config": replace(config, layout="near"), "flatten": True},
-        vec_env_cls=SubprocVecEnv, vec_env_kwargs={"start_method": "spawn"},
+    envs = TorchRLTransportEnv(replace(config, layout="near"), num_envs=NUM_ENVS)
+    envs.set_seed(TRAINING_SEED)
+    actor, critic = make_mappo_networks()
+    loss = make_mappo_loss(actor, critic, settings)  # TorchRLのMAPPOLossとGAE
+    optimizer = torch.optim.Adam(loss.parameters(), lr=settings.learning_rate)
+    collector = Collector(
+        envs, actor, frames_per_batch=FRAMES_PER_BATCH, total_frames=TRAINING_STEPS,
+        device="cpu", auto_register_policy_transforms=True,
     )
-    model = PPO(
-        SharedTeamPolicy, envs, n_steps=HORIZON, batch_size=64,
-        n_epochs=4, ent_coef=0.005, policy_kwargs={"log_std_init": -1.0},
-        seed=TRAINING_SEED, device="cpu", verbose=1,
+    buffer = ReplayBuffer(
+        storage=LazyTensorStorage(FRAMES_PER_BATCH), sampler=SamplerWithoutReplacement(),
+        batch_size=settings.minibatch_size,
     )
-    model.set_logger(configure(str(output), ["stdout", "csv"]))
-    curriculum = ApproachCurriculum(config=config, output=output)
-    checkpoints = CheckpointCallback(
-        save_freq=25 * NUM_ENVS * HORIZON, save_path=str(output / "checkpoints"),
-        name_prefix="navigation",
+    curriculum = ApproachCurriculum(
+        config=config, env=envs, actor=actor, output=output,
+        seed=TRAINING_SEED, settings=settings, horizon=HORIZON,
     )
-    model.learn(total_timesteps=TRAINING_STEPS, callback=[curriculum, checkpoints])
-    model.save(output / "navigator")
-    models[name] = bind_transport(
-        output / "navigator.zip", PUSHER, output / "transport.json",
-        config=config, provenance=envs.get_attr("provenance")[0],
+    for batch in collector:
+        loss.value_estimator(batch)  # 最終観測も使い、TorchRLがadvantageを計算
+        buffer.empty()  # PPOは今回収集した経験だけで更新する
+        buffer.extend(batch.reshape(-1))
+        for _ in range(settings.epochs):
+            for minibatch in buffer:
+                metrics = loss(minibatch)
+                objective = metrics["loss_objective"] + metrics["loss_critic"] + metrics["loss_entropy"]
+                optimizer.zero_grad()
+                objective.backward()
+                torch.nn.utils.clip_grad_norm_(loss.parameters(), settings.max_grad_norm)
+                optimizer.step()
+        collector.update_policy_weights_()
+        curriculum.record(batch, metrics)
+        if curriculum.rollouts % 25 == 0:
+            save_mappo(
+                output / "checkpoints" / f"step_{curriculum.transitions}.pt", actor, critic, optimizer,
+                config=config, pushing_checkpoint=PUSHER, provenance=envs.provenance,
+                training=curriculum.training, curriculum=curriculum.state,
+            )
+    models[name] = save_mappo(
+        output / "transport.pt", actor, critic, optimizer,
+        config=config, pushing_checkpoint=PUSHER, provenance=envs.provenance,
+        training=curriculum.training, curriculum=curriculum.state,
     )
-    envs.close()
+    curriculum.close()
+    collector.shutdown()
 """,
     ),
     (
         "markdown",
         r"""### 保存した方策を読み込み、観測から行動を決める
-`PPO.load()` で自分のモデルを読み込み、`model.predict(observation)` で行動を決めます。
-このセルでは行動を手で指定しません。`deterministic=True` は評価用に平均の行動を使います。
-SB3へ渡す `flatten=True` の回り込み環境は、観測が `(20,)`、行動が `(6,)` です。
-行動を `(2,3)` に並べると、各機に送る前後・左右・旋回の正規化値を確認できます。
+`load_mappo()` で自分のactorを読み込み、`policy_action(actor, observation)` で行動を決めます。
+この関数は評価用に `tanh(loc)` を使い、探索の乱数や移動のルールは加えません。
+観測はGymnasiumの `(2,10)` のまま、行動は各機の前後・左右・旋回を並べた `(2,3)` です。
 """,
     ),
     (
         "code",
-        r"""model = PPO.load(RUN_DIR / "baseline/navigator.zip", device="cpu")
-env = gym.make("HexapodApproach-v0", config=replace(baseline_config, layout="front"), flatten=True)
+        r"""from hexapod_transport_rl import load_mappo, policy_action
+
+actor, critic, saved = load_mappo(models["baseline"])
+env = gym.make("HexapodApproach-v0", config=replace(baseline_config, layout="front"))
 observation, info = env.reset(seed=83000)
-action, _ = model.predict(observation, deterministic=True)
-print("方策が決めた2台分の行動:", action.reshape(2, 3))
+action = policy_action(actor, observation)
+print("方策が決めた2台分の行動:", action)
 observation, reward, terminated, truncated, info = env.step(action)
 print("報酬:", reward, "内訳:", info["reward_terms"])
 env.close()
@@ -402,7 +443,8 @@ env.close()
     ),
     (
         "markdown",
-        r"""SB3の `progress.csv` に収集量・学習速度・損失と、callbackが記録したカリキュラムが残ります。
+        r"""`progress.csv` に収集量・学習速度・TorchRLが返した損失と、到達カリキュラムが残ります。
+損失は各ロールアウトの最後のミニバッチの値です。
 以下で実測速度と本学習の概算を確認します。速度には検証時間も含まれますが、CPUの性能や学習が進んだ後の配置で変わるため概算です。
 異なる報酬設計の総報酬の大小は、性能の良し悪しとして比較しません。
 """,
@@ -416,7 +458,7 @@ for name in conditions:
     log = pd.read_csv(RUN_DIR / name / "progress.csv")
     training_logs[name] = log
     display(log.tail(3))
-    speed = log["time/fps"].iloc[-1]
+    speed = log["team_steps_per_second"].iloc[-1]
     print(name, "学習速度:", speed, "チームステップ/秒")
     print("409600ステップの概算:", round(409600 / speed / 3600, 2), "時間/条件")
 """,
@@ -542,8 +584,8 @@ media.show_videos(videos, fps=5, titles=list(models))
 5. 次に1つだけ変更して検証する条件。
 
 **拡張課題：押す段階の報酬を調べる場合**は、`PushRewardWeights` を `PushConfig(reward_weights=...)`
-へ渡せます。押す方策を新しく学習する場合も、`gym.make("HexapodPush-v0", config=..., flatten=True)` と
-`PPO(SharedTeamPolicy, env, ...)` を使えます。旧MAPPOの `.pt` はSB3の初期重みとして直接読み込めません。
+へ渡せます。押す方策を新しく学習する場合も、`TorchRLTransportEnv(PushConfig(...))` と
+同じTorchRLの収集・更新ループを使えます。旧形式の `.pt` は新しいネットワークへ直接読み込めません。
 比較する両条件とも同じ乱数seedから開始し、同じ学習量で比較します。
 回り込みと押す報酬を同時に変えると原因を切り分けにくいため、最初は片方ずつ調べてください。
 APIの詳細・再開方法は [教材ガイド](https://github.com/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/docs/colab-guide.md) にあります。

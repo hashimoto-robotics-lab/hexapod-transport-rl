@@ -22,8 +22,7 @@ from .approach import (
 from .approach_training import load_approach_checkpoint
 from .config import CONTROL_DT, PushConfig
 from .env import PushEnv
-from .mappo import MAPPO
-from .types import FloatArray, Info
+from .types import AgentPolicy, FloatArray, Info
 
 
 class LearnedTransport:
@@ -33,7 +32,7 @@ class LearnedTransport:
     Call reset for each episode. The learned actors retain no episode state.
     """
 
-    def __init__(self, navigator: MAPPO, pusher: MAPPO) -> None:
+    def __init__(self, navigator: AgentPolicy, pusher: AgentPolicy) -> None:
         self.navigator, self.pusher = navigator, pusher
         self.reset()
 

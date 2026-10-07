@@ -1,7 +1,7 @@
 [project]
 name = "hexapod-transport-rl"
 version = "0.1.0"
-description = "Cooperative hexapod pushing in MuJoCo with shared-policy PPO"
+description = "Cooperative hexapod pushing in MuJoCo with TorchRL MAPPO"
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "mujoco==3.11.0",
@@ -13,7 +13,8 @@ dependencies = [
     "matplotlib>=3.9,<4",
     "mediapy>=1.2,<2",
     "pandas>=2.2,<4",
-    "stable-baselines3==2.9.0",
+    "torchrl==0.14.0",
+    "tensordict==0.14.2",
 ]
 
 [project.scripts]

@@ -48,7 +48,8 @@ def create_experiment(project_dir: str | Path, name: str) -> Path:
                 "gymnasium",
                 "mediapy",
                 "pandas",
-                "stable-baselines3",
+                "torchrl",
+                "tensordict",
             )
         },
     )
