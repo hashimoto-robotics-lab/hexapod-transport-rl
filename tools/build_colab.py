@@ -97,7 +97,8 @@ sys.path.insert(0, str(PROJECT_DIR / "tools"))
     markdown(r"""
 ## Step 2 — 実行環境を準備する
 
-準備用APIが、Python 3.12・MuJoCo・固定した依存ライブラリと動画の描画環境を用意します。
+準備用APIが、Colabで直接importできるライブラリと動画の描画環境を用意します。
+歩行と環境APIはセル内で実行し、並列学習は内部で専用環境を使います。
 このセルもそのまま実行してください。以降の `lesson` は学習・評価・保存を実行する補助APIです。
 ロボットの操作には、次の `WalkingSimulation` を使います。
 """)
@@ -128,15 +129,17 @@ lesson = ColabLesson(PROJECT_DIR)
 
 下のAPI呼び出しを1つ変えて再実行し、動きの違いを確かめてください。
 `with` は最後に動画の保存と後片付けを行います。
-`lesson.run_example()` の中のコードが、専用環境で実行されます。
+通常のPythonコードとして実行します。
+セルに分けて動かす場合は `sim = WalkingSimulation(...)` で生成し、最後に `sim.close()` を呼びます。
 **最初は `set_velocity()` の速度と `run_for()` の時間を変更してみましょう。**
 `run_for()` の時間は、歩行制御周期の0.04秒刻みで指定します。
 """)
     code(r"""
-lesson.run_example(r'''
+from IPython.display import Video, display
 from hexapod_transport_rl import WalkingSimulation
 
-with WalkingSimulation(num_robots=1, video_path="walking_commands.mp4") as sim:
+walking_video = PROJECT_DIR / "runs/walking_commands.mp4"
+with WalkingSimulation(num_robots=1, video_path=walking_video) as sim:
     sim.stop()
     sim.run_for(seconds=0.8)
 
@@ -154,8 +157,7 @@ with WalkingSimulation(num_robots=1, video_path="walking_commands.mp4") as sim:
 
     sim.stop()
     sim.run_for(seconds=0.8)
-''', name="walking_commands")
-lesson.show_example_video("walking_commands", "walking_commands.mp4")
+display(Video(str(walking_video), embed=True))
 """)
     markdown(r"""
 ### 同じAPIで4台を動かす
@@ -166,10 +168,10 @@ lesson.show_example_video("walking_commands", "walking_commands.mp4")
 ここでも学習は行わず、荷物はありません。4台の協調運搬を学習する環境は、今後拡張する研究課題です。
 """)
     code(r"""
-lesson.run_example(r'''
 from hexapod_transport_rl import WalkingSimulation
 
-with WalkingSimulation(num_robots=4, video_path="four_robots.mp4") as sim:
+four_robots_video = PROJECT_DIR / "runs/four_robots.mp4"
+with WalkingSimulation(num_robots=4, video_path=four_robots_video) as sim:
     sim.run_for(seconds=0.8)
     sim.set_velocity(robot_id=0, vx=0.10)
     sim.set_velocity(robot_id=1, vx=0.05)
@@ -180,8 +182,7 @@ with WalkingSimulation(num_robots=4, video_path="four_robots.mp4") as sim:
     print("4台の向き [rad]:", sim.headings)
     sim.stop()
     sim.run_for(seconds=0.8)
-''', name="four_robot_commands")
-lesson.show_example_video("four_robot_commands", "four_robots.mp4")
+display(Video(str(four_robots_video), embed=True))
 """)
     markdown(r"""
 ## 歩行コマンドから協調運搬へ
@@ -231,7 +232,6 @@ lesson.configure(
 1 stepは0.2秒。1つのMuJoCo世界に2台とTがあり、報酬はチームで共有します。
 """)
     code(r"""
-lesson.run_python(r'''
 import numpy as np
 from hexapod_transport_rl import HexapodPushEnv, PushConfig
 
@@ -244,7 +244,6 @@ with HexapodPushEnv(PushConfig(shape="T"), flatten=False) as env:
     print("チーム報酬:", reward)
     print("終了:", terminated, "時間切れ:", truncated)
     print("報酬の内訳:", info["reward_terms"])
-''', name="inspect_api.py", show_output=True)
 """)
     markdown(r"""
 ## Step 6 — 参考の学習済みモデルを再生する

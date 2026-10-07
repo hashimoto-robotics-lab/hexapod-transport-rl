@@ -30,7 +30,7 @@
 ## Colabの補助API
 
 学生用ノートブックは `ColabLesson` の呼び出しで学習・評価・保存を表します。
-`tools/colab_runtime.py` は専用Pythonの準備、CLIの別プロセス起動、設定の検証、
+`tools/colab_runtime.py` はセルで直接importするライブラリと専用の学習Pythonの準備、CLIの別プロセス起動、設定の検証、
 コミット・ソースの記録、途中保存・再開、動画表示を担当します。
 `tools/colab_analysis.py` は学習ログから図と評価表を生成します。
 MAPPOや報酬の定義は従来どおり `src/` にあり、補助APIに学習アルゴリズムは実装していません。

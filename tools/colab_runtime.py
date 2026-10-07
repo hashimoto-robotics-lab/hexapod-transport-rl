@@ -1,12 +1,13 @@
 """Colab infrastructure, kept separate from student simulation and research cells.
 
-This module uses the notebook kernel only to manage files and subprocesses.
-MuJoCo, PyTorch and plotting run in the locked Python 3.12 environment.
+Walking and environment inspection run directly in the notebook kernel.
+Parallel training and evaluation use the locked Python 3.12 environment.
 """
 
 import ctypes.util
 import hashlib
 import html
+import importlib
 import io
 import json
 import math
@@ -27,7 +28,7 @@ class ColabLesson:
     """Run the course workflow without exposing process or storage boilerplate."""
 
     def __init__(self, project_dir):
-        """Prepare the isolated CPU simulation environment once."""
+        """Prepare direct notebook imports and the isolated training environment."""
         self.project_dir = Path(project_dir).resolve()
         self.repository = "hashimoto-robotics-lab/hexapod-transport-rl"
         self.repository_commit = subprocess.check_output(
@@ -75,16 +76,40 @@ class ColabLesson:
             raise RuntimeError(
                 "OSMesaが見つかりません。Step 2のインストール結果を確認してください。"
             )
+        self._prepare_notebook_kernel()
+        print("セルから直接importできる環境と、並列学習用の環境を準備しました。")
+
+    def _prepare_notebook_kernel(self):
+        """Install into the actual kernel, retaining compatible preinstalled packages."""
+        # Training keeps its lockfile; the notebook retains Colab's compatible
+        # NumPy/PyTorch so imported scientific libraries do not need replacing.
         subprocess.run(
             [
-                str(self.python),
-                "-c",
-                "import sys, mujoco, torch; print(sys.version); print('MuJoCo', mujoco.__version__, 'PyTorch', torch.__version__)",
+                self.uv,
+                "pip",
+                "install",
+                "--python",
+                sys.executable,
+                "--editable",
+                str(self.project_dir),
+                "--torch-backend",
+                "cpu",
             ],
-            env=self.process_env,
             check=True,
         )
-        print("CPU実行環境と描画環境を準備しました。")
+        for key in (
+            "MUJOCO_GL",
+            "PYOPENGL_PLATFORM",
+            "MPLBACKEND",
+            "OMP_NUM_THREADS",
+            "MKL_NUM_THREADS",
+        ):
+            os.environ[key] = self.process_env[key]
+        sys.path.insert(0, str(self.project_dir / "src"))
+        importlib.invalidate_caches()
+        import torch
+
+        torch.set_num_threads(1)
 
     def configure(
         self,
@@ -295,16 +320,6 @@ class ColabLesson:
     def _run_cli(self, arguments, label):
         """Invoke the same CLI used for local research experiments."""
         self._run_command(["-m", "hexapod_transport_rl.cli", *arguments], label)
-
-    def run_python(self, source, *arguments, name="lesson_step.py", show_output=False):
-        """Save and run editable student code using the isolated Python."""
-        scripts = self.run_dir / "scripts"
-        scripts.mkdir(exist_ok=True)
-        script = scripts / name
-        script.write_text(source)
-        self._run_command([script, *arguments], Path(name).stem)
-        if show_output:
-            print((self.run_dir / "logs" / (Path(name).stem + ".txt")).read_text())
 
     def _checkpoint_iteration(self, path):
         """Read progress with PyTorch in the simulation process."""
@@ -681,25 +696,23 @@ class ColabLesson:
             self.colab_files.download(str(archive_path))
         return archive_path
 
-    def run_example(self, source, *, name):
-        """Execute editable walking API examples in the simulation Python."""
-        output_dir = self.project_dir / "runs" / name
-        output_dir.mkdir(parents=True, exist_ok=True)
-        script = output_dir / "example.py"
-        script.write_text(source)
-        subprocess.run(
-            [str(self.python), str(script)],
-            cwd=output_dir,
-            env=self.process_env,
-            check=True,
-        )
-
-    def show_example_video(self, name, filename):
-        """Display a walking video after its simulation has finished."""
-        display(Video(str(self.project_dir / "runs" / name / filename), embed=True))
-
     def _record_runtime(self):
-        """Record library versions without importing simulation libraries in Colab."""
+        """Record notebook and training versions separately for reproducibility."""
+        import mujoco
+        import numpy
+        import torch
+
+        runtime = dict(
+            python=sys.version,
+            executable=sys.executable,
+            torch=torch.__version__,
+            mujoco=mujoco.__version__,
+            numpy=numpy.__version__,
+            cpu_count=os.cpu_count(),
+            torch_threads=torch.get_num_threads(),
+            rendering_backend=os.environ.get("MUJOCO_GL"),
+        )
+        (self.run_dir / "runtime.json").write_text(json.dumps(runtime, indent=2) + "\n")
         source = r"""import json, os, sys
 from pathlib import Path
 import mujoco, numpy, torch
@@ -709,4 +722,7 @@ runtime = dict(python=sys.version, torch=torch.__version__, mujoco=mujoco.__vers
                rendering_backend=os.environ.get("MUJOCO_GL"))
 Path(sys.argv[1]).write_text(json.dumps(runtime, indent=2) + "\n")
 """
-        self.run_python(source, self.run_dir / "runtime.json", name="record_runtime.py")
+        self._run_command(
+            ["-c", source, self.run_dir / "training_runtime.json"],
+            "record_training_runtime",
+        )

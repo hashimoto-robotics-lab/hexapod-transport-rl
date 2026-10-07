@@ -18,10 +18,10 @@ runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
 
 
-def test_notebook_and_nested_worker_scripts_compile():
+def test_notebook_uses_direct_simulation_imports():
     notebook = nbformat.read(NOTEBOOK, as_version=4)
     nbformat.validate(notebook)
-    workers = 0
+    walking_simulations = 0
     for index, cell in enumerate(notebook.cells):
         if cell.cell_type != "code":
             continue
@@ -35,12 +35,13 @@ def test_notebook_and_nested_worker_scripts_compile():
         for node in ast.walk(tree):
             if (
                 isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr in ("run_python", "run_example")
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "WalkingSimulation"
             ):
-                compile(ast.literal_eval(node.args[0]), f"worker_{index}", "exec")
-                workers += 1
-    assert workers == 3
+                walking_simulations += 1
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                assert node.func.attr not in ("run_example", "run_python")
+    assert walking_simulations == 2
     assert all(
         cell.execution_count is None and cell.outputs == []
         for cell in notebook.cells
