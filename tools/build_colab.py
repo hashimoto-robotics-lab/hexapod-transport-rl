@@ -94,25 +94,26 @@ import numpy as np
 import mediapy as media
 import hexapod_transport_rl  # Gymnasiumに教材の環境を登録する
 
-with gym.make("HexapodWalking-v0", num_robots=1, episode_seconds=9.4, render_mode="rgb_array") as env:
-    observation, info = env.reset(seed=42)
-    frames = [env.render()]
-    for steps, command in [
-        (4, [0.0, 0.0, 0.0]),
-        (15, [0.12, 0.0, 0.0]),
-        (12, [0.0, 0.06, 0.0]),
-        (12, [0.0, 0.0, 0.40]),
-        (4, [0.0, 0.0, 0.0]),
-    ]:
-        action = np.array([command], dtype=np.float32)
-        for _ in range(steps):
-            observation, reward, terminated, truncated, info = env.step(action)
-            frames.append(env.render())
-            if terminated or truncated:
-                break
-        print("位置 [m]:", info["positions"], "向き [rad]:", info["headings"])
+env = gym.make("HexapodWalking-v0", num_robots=1, episode_seconds=9.4, render_mode="rgb_array")
+observation, info = env.reset(seed=42)
+frames = [env.render()]
+for steps, command in [
+    (4, [0.0, 0.0, 0.0]),
+    (15, [0.12, 0.0, 0.0]),
+    (12, [0.0, 0.06, 0.0]),
+    (12, [0.0, 0.0, 0.40]),
+    (4, [0.0, 0.0, 0.0]),
+]:
+    action = np.array([command], dtype=np.float32)
+    for _ in range(steps):
+        observation, reward, terminated, truncated, info = env.step(action)
+        frames.append(env.render())
         if terminated or truncated:
             break
+    print("位置 [m]:", info["positions"], "向き [rad]:", info["headings"])
+    if terminated or truncated:
+        break
+env.close()
 media.show_video(frames, fps=5)
 """,
     ),
@@ -127,23 +128,24 @@ media.show_video(frames, fps=5)
     ),
     (
         "code",
-        r"""with gym.make("HexapodWalking-v0", num_robots=4, episode_seconds=4.6, render_mode="rgb_array") as env:
-    observation, info = env.reset(seed=42)
-    frames = [env.render()]
-    commands = np.array([
-        [0.10, 0.00, 0.00],
-        [0.05, 0.00, 0.00],
-        [0.08, 0.04, 0.00],
-        [0.00, 0.00, 0.30],
-    ], dtype=np.float32)
-    for step in range(23):
-        action = commands if 4 <= step < 19 else np.zeros((4, 3), dtype=np.float32)
-        observation, reward, terminated, truncated, info = env.step(action)
-        frames.append(env.render())
-        if terminated or truncated:
-            break
-    print("4台の位置 [m]:", info["positions"])
-    print("4台の向き [rad]:", info["headings"])
+        r"""env = gym.make("HexapodWalking-v0", num_robots=4, episode_seconds=4.6, render_mode="rgb_array")
+observation, info = env.reset(seed=42)
+frames = [env.render()]
+commands = np.array([
+    [0.10, 0.00, 0.00],
+    [0.05, 0.00, 0.00],
+    [0.08, 0.04, 0.00],
+    [0.00, 0.00, 0.30],
+], dtype=np.float32)
+for step in range(23):
+    action = commands if 4 <= step < 19 else np.zeros((4, 3), dtype=np.float32)
+    observation, reward, terminated, truncated, info = env.step(action)
+    frames.append(env.render())
+    if terminated or truncated:
+        break
+print("4台の位置 [m]:", info["positions"])
+print("4台の向き [rad]:", info["headings"])
+env.close()
 media.show_video(frames, fps=5)
 """,
     ),
@@ -173,7 +175,7 @@ media.show_video(frames, fps=5)
 戻り値は `observation, reward, terminated, truncated, info` です。
 `terminated` は成功や転倒などの終了、`truncated` は時間切れです。どちらかがTrueなら、そのエピソードを終えます。
 このセルでは1エピソードを2秒間進め、報酬の内訳を見てから動画を表示します。
-終了後に続けるには `reset()`、使い終わったら `close()`（`with` では自動）です。
+終了後に続けるには `reset()`、使い終わったら `env.close()` で描画資源を解放します。
 `info["reward_terms"]` は**このステップで実際に返した報酬の内訳**です。
 """,
     ),
@@ -182,17 +184,18 @@ media.show_video(frames, fps=5)
         r"""from hexapod_transport_rl import ApproachConfig
 
 config = ApproachConfig(layout="front", seconds=2.0)
-with gym.make("HexapodApproach-v0", config=config, render_mode="rgb_array") as env:
-    observation, info = env.reset(seed=80000)
-    print("観測:", env.observation_space, "行動:", env.action_space)
-    frames = [env.render()]
-    terminated = truncated = False
-    while not (terminated or truncated):
-        action = np.zeros(env.action_space.shape, dtype=np.float32)
-        observation, reward, terminated, truncated, info = env.step(action)
-        frames.append(env.render())
-        print("チーム報酬:", reward, "内訳:", info["reward_terms"])
-    print("終了理由:", info["termination_reason"])
+env = gym.make("HexapodApproach-v0", config=config, render_mode="rgb_array")
+observation, info = env.reset(seed=80000)
+print("観測:", env.observation_space, "行動:", env.action_space)
+frames = [env.render()]
+terminated = truncated = False
+while not (terminated or truncated):
+    action = np.zeros(env.action_space.shape, dtype=np.float32)
+    observation, reward, terminated, truncated, info = env.step(action)
+    frames.append(env.render())
+    print("チーム報酬:", reward, "内訳:", info["reward_terms"])
+print("終了理由:", info["termination_reason"])
+env.close()
 media.show_video(frames, fps=5)
 """,
     ),
@@ -262,10 +265,11 @@ conditions = {"baseline": baseline_config, "strong_contact": changed_config}
     (
         "code",
         r"""for name, config in conditions.items():
-    with gym.make("HexapodApproach-v0", config=replace(config, layout="front")) as env:
-        env.reset(seed=80000)
-        _, reward, _, _, info = env.step(np.zeros((2, 3), dtype=np.float32))
-        print(name, "報酬:", reward, "内訳:", info["reward_terms"])
+    env = gym.make("HexapodApproach-v0", config=replace(config, layout="front"))
+    env.reset(seed=80000)
+    _, reward, _, _, info = env.step(np.zeros((2, 3), dtype=np.float32))
+    print(name, "報酬:", reward, "内訳:", info["reward_terms"])
+    env.close()
 """,
     ),
     (

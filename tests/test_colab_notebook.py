@@ -21,7 +21,17 @@ def test_notebook_uses_direct_simulation_imports():
         compile(tree, f"cell_{index}", "exec")
         # Student cells contain the experiment, not error handling or helper definitions.
         assert not any(
-            isinstance(node, (ast.Raise, ast.Assert, ast.Try, ast.FunctionDef))
+            isinstance(
+                node,
+                (
+                    ast.Raise,
+                    ast.Assert,
+                    ast.Try,
+                    ast.FunctionDef,
+                    ast.With,
+                    ast.AsyncWith,
+                ),
+            )
             for node in ast.walk(tree)
         )
         for node in ast.walk(tree):

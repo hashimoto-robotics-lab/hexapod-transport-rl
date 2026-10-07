@@ -13,14 +13,15 @@ import numpy as np
 import mediapy as media
 import hexapod_transport_rl  # 環境を登録する
 
-with gym.make("HexapodWalking-v0", num_robots=1, render_mode="rgb_array") as env:
-    observation, info = env.reset(seed=42)
-    frames = [env.render()]
-    terminated = truncated = False
-    while not (terminated or truncated):
-        action = np.array([[0.12, 0.0, 0.0]], dtype=np.float32)
-        observation, reward, terminated, truncated, info = env.step(action)
-        frames.append(env.render())
+env = gym.make("HexapodWalking-v0", num_robots=1, render_mode="rgb_array")
+observation, info = env.reset(seed=42)
+frames = [env.render()]
+terminated = truncated = False
+while not (terminated or truncated):
+    action = np.array([[0.12, 0.0, 0.0]], dtype=np.float32)
+    observation, reward, terminated, truncated, info = env.step(action)
+    frames.append(env.render())
+env.close()
 media.show_video(frames, fps=5)
 ```
 
@@ -30,7 +31,7 @@ media.show_video(frames, fps=5)
 | `reset(seed=..., options=...)` | 初期状態を作り、観測と診断情報を返す |
 | `step(action)` | 全機を0.2秒進め、観測・報酬・終了・時間切れ・診断情報を返す |
 | `render()` | `render_mode="rgb_array"` のときRGB画像を返す |
-| `close()` | 描画資源を解放する。`with` では自動 |
+| `close()` | 使い終わった環境の描画資源を解放する |
 | `action_space` / `observation_space` | 有効な行動・観測の形と範囲 |
 
 `terminated` は成功や転倒、`truncated` は時間切れです。どちらかがTrueならエピソードを終えます。
@@ -72,10 +73,11 @@ Gymnasiumではチームを1つの意思決定主体として扱います。こ�
 ```python
 from hexapod_transport_rl import PushConfig
 
-with gym.make("HexapodPush-v0", config=PushConfig(shape="T"), flatten=False) as env:
-    obs, info = env.reset(seed=42)
-    action = env.action_space.sample()  # 実際の学習ではactorの出力
-    next_obs, reward, terminated, truncated, info = env.step(action)
+env = gym.make("HexapodPush-v0", config=PushConfig(shape="T"), flatten=False)
+obs, info = env.reset(seed=42)
+action = env.action_space.sample()  # 実際の学習ではactorの出力
+next_obs, reward, terminated, truncated, info = env.step(action)
+env.close()
 ```
 
 | 項目 | 2台の場合 |
@@ -113,9 +115,10 @@ with gym.make("HexapodPush-v0", config=PushConfig(shape="T"), flatten=False) as 
 ```python
 from hexapod_transport_rl import ApproachConfig
 
-with gym.make("HexapodApproach-v0", config=ApproachConfig(layout="front")) as env:
-    obs, info = env.reset(seed=42)
-    next_obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
+env = gym.make("HexapodApproach-v0", config=ApproachConfig(layout="front"))
+obs, info = env.reset(seed=42)
+next_obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
+env.close()
 ```
 
 `reset(options={"layout": "side"})` でそのエピソードだけ初期配置を指定できます。
@@ -159,11 +162,12 @@ from hexapod_transport_rl import ApproachConfig, ApproachRewardWeights
 
 reward = replace(ApproachRewardWeights(), robot_contact=12.0)
 config = ApproachConfig(layout="front", reward_weights=reward)
-with gym.make("HexapodApproach-v0", config=config, render_mode="rgb_array") as env:
-    observation, info = env.reset(seed=80000)
-    observation, reward, terminated, truncated, info = env.step(env.action_space.sample())
-    terms = info["reward_terms"]  # 合計がこのstepのチーム報酬
-    frame = env.render()
+env = gym.make("HexapodApproach-v0", config=config, render_mode="rgb_array")
+observation, info = env.reset(seed=80000)
+observation, reward, terminated, truncated, info = env.step(env.action_space.sample())
+terms = info["reward_terms"]  # 合計がこのstepのチーム報酬
+frame = env.render()
+env.close()
 ```
 
 回り込みの観測は `(2, 10)`、行動は `(2, 3)` の−1〜1です。
