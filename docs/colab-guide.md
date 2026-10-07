@@ -22,17 +22,39 @@
 
 **GitHubへのログイン、リポジトリへの招待、アクセストークンは不要**です。
 同じランタイムでStep 1を再実行すると、取得済みの教材を使い、学生の編集や学習結果を上書きしません。
-取得に失敗した場合も、途中の取得先を残さず再試行できます。
 
 ## 教材の版と共有
 
 教材はこのリポジトリのルートで管理します。教員が変更したコードとノートブックをcommitして共有してください。
 `runs/` と `.venv/` はGitで共有しません。
 
-`GIT_REF` の既定は `main` です。論文の再現用にはタグ名またはコミットSHAを指定してください。
+学生用ノートブックは `main` の教材を取得します。版を選ぶ設定はありません。
 `experiment.json` に取得したコミットSHAと実行時のソース・資産のハッシュを記録します。
 コードを編集した場合は、別の実験名で学習してください。
-別の版を取得する際は、新しいランタイムでStep 1から始めます。
+更新した教材を取得する際は、新しいランタイムでStep 1から始めます。
+論文の再現用に特定の版を配布する場合は、教員側で教材の取得先を固定してください。
+
+## 学生が編集するコード
+
+歩行体験では `set_velocity()` の速度と `run_for()` の時間を変えます。
+運搬実験では `lesson.configure()` の実験名・mode・独立世界数・seed・押す方策の初期化を変えます。
+学習と評価の流れは、次の呼び出しで表します。
+
+```python
+pusher = lesson.prepare_pusher()
+navigator = lesson.train_navigation(pusher)
+adapted_pusher = lesson.train_handover(pusher)
+model = lesson.select_model(navigator, adapted_pusher)
+test_results = lesson.evaluate(model)
+lesson.show_results()
+lesson.show_learned_video(model)
+lesson.save_results()
+```
+
+インストール、設定の検証、別プロセスの起動、モデルの再開、記録・保存は
+`tools/colab_runtime.py` が担当します。学習曲線・CSVの生成は `tools/colab_analysis.py` にあります。
+学生は最初からこれらの内部実装を読む必要はありません。
+環境APIの `reset()` / `step()` と歩行指令は、ノートブックにコードを残しています。
 
 ## 上から順に実行する
 
@@ -76,15 +98,17 @@ MuJoCoの動画はOSMesaによるソフトウェア描画、標準640×480・5 f
 
 ## 保存と再開
 
-長い本学習では `SAVE_TO_DRIVE=True` を選ぶと、Google Driveへの接続後、途中の重みとログを定期的にコピーします。
+最初の一巡では保存用の追加設定は不要です。最後の `lesson.save_results()` でZIPを保存します。
+長い本学習でDriveへ途中保存したいときだけ、Step 4の `lesson.configure()` に
+`save_to_drive=True` を追加してください。Google Driveへの接続後、途中の重みとログを定期的にコピーします。
 シミュレーションはColab内で実行し、Driveはバックアップに使います。
 同じ実験名・設定でノートブックを再実行すると、保存済みの最新checkpointから未完了分を追加学習します。
 中断後に再開する場合、すでに保存した更新は引き継ぎますが、中断時のエピソード・乱数列を完全に復元する再開ではありません。
 
 Driveを使わない場合は最終セルのZIPを保存してください。
-`RESTORE_RESULTS=True` を選ぶと、Colab内で保存したZIPをアップロードして再開できます。
+Step 4の `lesson.configure()` に `restore_results=True` を追加すると、保存したZIPをアップロードして再開できます。
 結果ZIPには使用したソース・ロボット資産のスナップショット、SHA-256、ライブラリの版も含めます。
-乱数seed・実験条件を変える場合は `EXPERIMENT_ID` を変更し、別の実験として保存します。
+乱数seed・実験条件を変える場合は `lesson.configure()` の `name` を変更し、別の実験として保存します。
 
 Colabのランタイムは削除されることがあり、資源や実行時間にも変動があります。
 GitHubで教材を共有していても、ランタイム内の未保存の学習結果は失われます。
