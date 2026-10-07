@@ -3,16 +3,21 @@
 歩行コマンドの使い方は [APIガイド](api.md) を参照してください。`walking_env.py` がGymnasium形式の学生向け操作、`walking.py` が共通の歩行シミュレーション、
 `locomotion.py` が歩行と運搬で共通の固定モデル・モーター制御です。
 
-運搬の学習では、まず環境と報酬の2ファイルを読み、次に学習・評価を追います。
+学生の学習はStable-Baselines3の `PPO.learn()` を使います。
+環境・報酬を読んだ後、ネットワークの構造と初期配置callbackを確認してください。
 
 | 順番 | ファイル | 読む内容 |
 |---|---|---|
-| 1 | `src/hexapod_transport_rl/approach.py` | 回り込みの観測・行動、初期配置、整列条件 |
-| 2 | `src/hexapod_transport_rl/rewards.py` | 報酬係数と、実際に学習で使う回り込み報酬の式 |
-| 3 | `src/hexapod_transport_rl/env.py` | 押す動作の観測・報酬・成功判定と物理シミュレーション |
-| 4 | `src/hexapod_transport_rl/mappo.py` | 共有actor・中央critic、経験収集、GAE、PPO更新 |
-| 5 | `src/hexapod_transport_rl/approach_training.py` | 回り込みのカリキュラム、検証、保存・再開 |
-| 6 | `src/hexapod_transport_rl/approach_evaluation.py` | 方策の切り替え、運搬全体の評価と録画 |
+| 1 | `approach.py` | 回り込みのGymnasium API、観測・行動・整列条件 |
+| 2 | `rewards.py` | 報酬係数と実際に使う式 |
+| 3 | `sb3_policy.py` | 各機の局所観測を使う共有actor、全観測を使うcritic |
+| 4 | `sb3_training.py` | SB3 callbackによる検証・初期配置の難度変更、モデルの結合情報 |
+| 5 | `approach_evaluation.py` | 回り込みから固定押す方策への切り替え、評価・動画 |
+| 6 | `env.py` | 固定歩行モデル、接触計測と物理シミュレーション |
+
+`sb3_policy.py` は層の構造と共通の探索幅を指定するだけです。PPO損失、GAE、optimizerの更新を実装しません。
+`mappo.py` と `approach_training.py` は以前のMAPPOモデルの読み込み・再学習用です。
+学生の新しい比較学習はこれらの更新ループを使いません。
 
 ## 研究で変更する場所
 
@@ -22,16 +27,16 @@
 | 押す動作の報酬 | `rewards.py` の `PushRewardWeights` と `env.py` の `_reward_terms()` |
 | 初期配置 | `approach.py` の `ApproachConfig` と `_sample_start_pose()` |
 | 回り込みから押す動作へ移る条件 | `approach.py` の `HANDOVER_*` と `approach_ready()` |
-| 学習率・PPOのclip幅・各損失の係数 | `mappo.py` の `PPOSettings` |
-| 初期配置の難度を上げる条件 | `approach_training.py` の `ADVANCE_SUCCESS_RATE` と `MIN_PHASE_ITERATIONS` |
+| 学習率・PPOのclip幅・各損失の係数 | ノートブックの `PPO(...)` の引数 |
+| 初期配置の難度を上げる条件 | `sb3_training.py` の `ApproachCurriculum` |
 
 既定値は従来の成功した学習と同じです。係数は各環境の設定に渡し、保存モデルにも記録します。
 関数の式を編集した場合は新しいランタイム・新しい実験名で学習します。
-`PPOSettings` は回り込みと押す学習で共通です。保存モデルの層数・重み名・観測順は従来の形式を保っています。
+旧MAPPOの保存モデルは従来の形式で読み込みます。新しいSB3モデルは `.zip` に保存します。
 
 ## 学生の比較実験
 
-学生用ノートブックは、環境操作・報酬設定・`train_approach()`・`evaluate_transport()` を
+学生用ノートブックは、環境操作・報酬設定・SB3の `PPO.learn()`・`evaluate_transport()` を
 通常のPythonコードで直接呼び出します。報酬は `ApproachConfig(reward_weights=...)` へ渡します。
 `ApproachEnv.step()` は `rewards.py` の関数を使い、返した報酬と同じ内訳を `info["reward_terms"]` に格納します。
 
@@ -41,7 +46,7 @@
 手順や説明を変えるときは `tools/build_colab.py` を編集し、
 `uv run python tools/build_colab.py` で再生成してください。
 
-## 実行の流れ
+## 以前のMAPPOの実行の流れ
 
 ```text
 cli.py                    コマンドの入口（./run.sh）
@@ -74,7 +79,7 @@ cli.py                    コマンドの入口（./run.sh）
 | `vector.py` | 押す学習用の同期・別プロセスによる複数世界の実行 |
 | `types.py`、`__init__.py` | 共通型と公開API |
 
-## 学習アルゴリズム
+## 以前のMAPPOの学習アルゴリズム
 
 回り込みと押す動作は、それぞれ独立したMAPPOモデルです。各モデル内では2台がactorを共有し、
 中央criticが同じ世界の2台の観測をまとめて入力します。チーム報酬とadvantageも共有します。
@@ -83,7 +88,7 @@ actorとcriticは128ユニット×2層のMLP、行動は正規分布からサン
 `collect_rollout()` が経験を集め、`compute_gae()` がadvantageを計算し、`update_policy()` がPPO更新をします。
 時間切れ時はreset前の最終観測から価値を計算します。GAEの伝播は終了・時間切れの両方で切ります。
 
-`train_approach()` 内のコメント1〜5が、初期化、環境準備、収集・更新、検証・難度変更、保存に対応します。
+旧 `train_approach()` 内のコメント1〜5が、初期化、環境準備、収集・更新、検証・難度変更、保存に対応します。
 重みとoptimizerの準備は `_initialize_navigator()`、検証用の1エピソードは `validate()` が担当します。
 評価側は `run_batch()` が録画リソースを扱い、`_run_episode()` が物理更新と結果集計を担当します。
 録画時は物理更新後にコールバックで画像を取得します。

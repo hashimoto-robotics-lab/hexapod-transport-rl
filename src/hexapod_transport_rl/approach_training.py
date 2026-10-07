@@ -30,6 +30,10 @@ CHECKPOINT_INTERVAL = 25
 
 def load_approach_checkpoint(path: str | Path) -> tuple[MAPPO, MAPPO, Info]:
     """回り込みと押す方策を読み込み、形式とSHA-256を確認する。"""
+    if Path(path).suffix == ".json":
+        from .sb3_training import load_sb3_transport
+
+        return load_sb3_transport(path)
     saved = torch.load(path, weights_only=True, map_location="cpu")
     if (
         saved.get("format") not in (FORMAT, LEGACY_FORMAT)

@@ -41,7 +41,15 @@ def create_experiment(project_dir: str | Path, name: str) -> Path:
         executable=sys.executable,
         packages={
             name: importlib.metadata.version(name)
-            for name in ("numpy", "torch", "mujoco", "gymnasium", "mediapy", "pandas")
+            for name in (
+                "numpy",
+                "torch",
+                "mujoco",
+                "gymnasium",
+                "mediapy",
+                "pandas",
+                "stable-baselines3",
+            )
         },
     )
     (output / "experiment.json").write_text(json.dumps(record, indent=2) + "\n")

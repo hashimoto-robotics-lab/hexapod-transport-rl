@@ -7,12 +7,17 @@ from .approach_training import train_approach
 from .config import PushConfig
 from .env import PushEnv
 from .rewards import ApproachRewardWeights, PushRewardWeights
+from .sb3_policy import SharedTeamPolicy
+from .sb3_training import ApproachCurriculum, bind_transport
 from .vector import make_vector_env
 from .walking import WalkingSimulation
 from .walking_env import WALKING_ENV_ID, WalkingEnv
 
 __all__ = [
     "WalkingSimulation",
+    "SharedTeamPolicy",
+    "ApproachCurriculum",
+    "bind_transport",
     "WalkingEnv",
     "WALKING_ENV_ID",
     "APPROACH_ENV_ID",

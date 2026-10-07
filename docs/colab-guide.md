@@ -26,6 +26,7 @@ CPUランタイム、Python 3.12・3.13に対応します。最初の準備以�
 並列世界数はColab CPUの能力に合わせて2から調整します。描画は評価時だけ、物理更新は200 Hzです。
 GPUによるシミュレーションの高速化は組み込んでいません。
 
+学生の経験収集・GAE・PPO更新はStable-Baselines3が担当します。
 両条件とも同じ初期化seed・学習量・物理設定・固定歩行モデル・固定押す方策・カリキュラム規則を使います。
 カリキュラムは成功率によって進むため、報酬による到達段階の違いも記録します。
 同じ学習量の最後のモデルを共通の未使用テストseedで比較し、テスト結果からモデルを選び直しません。
@@ -36,50 +37,53 @@ GPUによるシミュレーションの高速化は組み込んでいません�
 ## 保存と再開
 
 `create_experiment(PROJECT_DIR, name)` は新規出力先を作り、実行時のソース・資産・モデル・コミットSHA・版を保存します。
-同じ名前を再利用せず、新しい条件には新しい名前を付けます。各学習の `run.json` に報酬係数とseedを記録し、
-`metrics.jsonl` に学習速度・到達段階、`checkpoint.pt` に重み・optimizerを保存します。
+同じ名前を再利用せず、新しい条件には新しい名前を付けます。各学習の `run.json` に報酬係数・seed・PPO設定・ライブラリの版を記録し、
+SB3の `progress.csv` に学習速度・損失、callbackが到達段階を記録します。
+`navigator.zip` がSB3の重み・optimizer、`transport.json` が共通の押す方策と結合する設定です。
+`curriculum.json` に到達段階と検証結果を保存します。SB3の標準 `CheckpointCallback` で
+25ロールアウトごとに中間モデルを `checkpoints/` へ保存します。
 最後の `archive_results(RUN_DIR)` で結果ZIPを作り、Colabのファイル一覧からダウンロードします。
 未保存の結果はランタイムの削除で失われるため、本学習では途中結果もDrive等へコピーしてください。
 
-保存済み実験をColabへ復元した後、通常のAPIで追加学習できます。
+保存したSB3モデルの再開は標準APIを使います。
 
 ```python
-continued = train_approach(
-    output=RUN_DIR / "baseline_continued",
-    pushing_checkpoint=PUSHER,
-    resume=RUN_DIR / "baseline/checkpoint.pt",
-    iterations=100,
-    num_envs=NUM_ENVS,
-    horizon=HORIZON,
-    seed=TRAINING_SEED,
-)
+from stable_baselines3 import PPO
+
+model = PPO.load(RUN_DIR / "baseline/navigator.zip", env=envs, device="cpu")
+model.learn(total_timesteps=12800, reset_num_timesteps=False)
+model.save("navigation_continued")
+envs.close()
 ```
 
-`iterations` は追加する更新数です。再開では保存済み報酬設定を引き継ぎます。
-設定も指定する場合は、保存済み設定と一致する必要があります。
-中断時のエピソード・乱数列の完全復元ではありません。条件比較では両条件の再開方針も揃えてください。
+`envs` は元と同じ報酬・物理設定で作ってください。追加学習はSB3のoptimizerも引き継ぎますが、
+中断時の世界・乱数列の完全復元ではありません。この短い例は環境の初期配置を固定した追加学習です。
+新しい `ApproachCurriculum` を指定した場合は近い配置からカリキュラムを始め直します。
+条件間で再開方針を揃え、保存モデルと使用した初期配置・報酬を別実験として記録してください。
 
 ## 押す報酬を研究する場合
 
-回り込みを固定し、両条件とも共通の押すモデルから同じ量を追加学習します。
-`train_handover` は引き継ぎ付近のランダム初期配置から、報酬のみで学習します。
+回り込みを固定して押す報酬だけを調べる場合、同じseedから新しいSB3の押すactorを学習します。
 
 ```python
+import gymnasium as gym
 from dataclasses import replace
-from hexapod_transport_rl import PushRewardWeights
-from hexapod_transport_rl.handover_training import train_handover, compose
+from stable_baselines3 import PPO
+from hexapod_transport_rl import PushConfig, PushRewardWeights, SharedTeamPolicy
 
 reward = replace(PushRewardWeights(), body_contact=3.0)
-pusher = train_handover(
-    checkpoint=PUSHER, output=RUN_DIR / "push_changed",
-    reward_weights=reward, iterations=150, num_envs=2, horizon=64,
-)
-model = compose(models["baseline"], pusher, RUN_DIR / "transport_changed.pt")
+env = gym.make("HexapodPush-v0", config=PushConfig(shape="T", reward_weights=reward), flatten=True)
+model = PPO(SharedTeamPolicy, env, n_steps=64, batch_size=64, device="cpu", seed=42)
+model.learn(total_timesteps=256)
+model.save("push_changed")
+env.close()
 ```
 
-変更なしの条件も同じ元モデルから同じ更新数で追加学習してください。
+この短い例は押す環境とSB3の接続確認です。旧MAPPOの `pusher.pt` をSB3へ直接読み込む追加学習ではありません。
+上記で作る新しい押す `.zip` と同梱の押す `.pt` は別形式です。
+現在の `bind_transport()` はSB3の回り込み `.zip` と固定した同梱の押す `.pt` の評価を扱います。
+新しい押す `.zip` の運搬全体への組み込みは別途評価アダプターを拡張する課題として扱います。
 回り込みと押す段階の変更を同時に行う前に、それぞれの影響を切り分けます。
-元のモデルは上書きしません。報酬のみを変えた押すモデルの結合は可能ですが、物理設定の異なるモデルは結合できません。
 
 ## 実験の範囲
 

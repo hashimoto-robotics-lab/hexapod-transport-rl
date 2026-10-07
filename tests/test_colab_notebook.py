@@ -131,6 +131,10 @@ def test_reward_parameters_flow_directly_to_training_and_paired_evaluation():
         cell.source for cell in notebook.cells if cell.cell_type == "code"
     )
     assert "config=config" in source
+    assert "from stable_baselines3 import PPO" in source
+    assert "model.learn(total_timesteps=TRAINING_STEPS" in source
+    assert "model.save(" in source
+    assert "train_approach(" not in source
     assert "reward_weights=changed_reward" in source
     assert "seed=TRAINING_SEED" in source
     assert "seed=seed" in source

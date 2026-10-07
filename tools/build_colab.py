@@ -28,7 +28,15 @@ Tとロボットの状態 → 上位方策 → 各機の速度指令 → 固定�
         └──────────────── 次の状態とチーム報酬 ────────────────────┘
 ```
 
-上位方策にはMAPPO（共有actor・中央critic）を使います。デモを教師にせず、報酬から学びます。
+上位方策は **Stable-Baselines3のPPO** で学習します。
+各機の観測だけを見るactorの重みを共有し、criticはチーム全体の観測を見ます。
+このネットワーク構造を `SharedTeamPolicy` で指定し、経験収集・GAE・PPO更新は外部ライブラリに任せます。
+デモを教師にせず、報酬から学びます。
+
+同梱の参考モデルは以前のMAPPO実装で学習したものです。
+SB3はチームの結合行動の確率比を使い、旧実装は各機の比を個別にclipします。
+また、SB3はGaussian行動を範囲内へclipし、旧実装はtanh変換します。
+**ネットワーク構造は共通でも更新方法が違うため、同じ学習結果になる保証はありません。**
 まず2台で報酬の比較実験を行います。歩行APIは1〜4台、押す環境は2〜4台に対応しますが、
 **この回り込みカリキュラムと同梱の運搬モデルは2台用**です。4台の運搬性能は、別途環境拡張と学習で検証します。
 
@@ -276,13 +284,18 @@ conditions = {"baseline": baseline_config, "strong_contact": changed_config}
         "markdown",
         r"""## 7. 同じ学習条件で、2種類の報酬を学習する
 両条件とも回り込みactorは同じseedでランダム初期化します。
-歩行モデル・押すモデル・物理条件・学習量・MAPPOの設定・カリキュラムの規則を共通にします。
-近い配置 → 後方 → 側方 → 前方と進み、検証成功率75%以上・各段階50更新以上で難度が上がります。
+歩行モデル・押すモデル・物理条件・学習量・PPOの設定・カリキュラムの規則を共通にします。
+近い配置 → 後方 → 側方 → 前方と進み、検証成功率75%以上・各段階50ロールアウト以上で難度が上がります。
+`ApproachCurriculum` はSB3のcallbackで、50ロールアウトごとに学習済み方策を別の検証seedで評価します。
+検証はそのロールアウトのPPO更新前に行います。難度変更は次のエピソードのresetから適用します。
+このcallbackは環境の初期配置だけを変更し、学習の更新処理は `model.learn()` が担当します。
 報酬によって進む段階が変わる可能性があるため、到達段階もログで確認してください。
 
 初期値の **256チームステップ／条件は動作確認だけ**です。運搬成功を期待する学習量ではありません。
 一巡できたら、新しい `EXPERIMENT_NAME` と `TRAINING_STEPS = 409600` を設定して本学習します。
-1チームステップは「2台のいる世界を1回進める」ことです。並列数×horizonが1更新の収集量です。
+1チームステップは「2台のいる世界を1回進める」ことです。並列数×horizonが1ロールアウトの収集量です。
+`TRAINING_STEPS` は `NUM_ENVS * HORIZON` の倍数で指定します。SB3はロールアウト単位で収集するため、
+端数を指定すると実際の収集量は切り上がります。
 `NUM_ENVS` は独立した世界の数で、ロボット台数ではありません。
 学習中は描画せず、CPUの並列シミュレーションを使います。
 
@@ -292,19 +305,17 @@ conditions = {"baseline": baseline_config, "strong_contact": changed_config}
     ),
     (
         "code",
-        r"""from hexapod_transport_rl import train_approach
-from hexapod_transport_rl.experiments import create_experiment
+        r"""from hexapod_transport_rl.experiments import create_experiment
 
 EXPERIMENT_NAME = "reward_trial_01"
 TRAINING_SEED = 20261008
 NUM_ENVS = 2
 HORIZON = 64
 TRAINING_STEPS = 256
-ITERATIONS = TRAINING_STEPS // (NUM_ENVS * HORIZON)
 
 RUN_DIR = create_experiment(PROJECT_DIR, EXPERIMENT_NAME)
 PUSHER = RUN_DIR / "source_snapshot/checkpoints/pusher.pt"
-print("1条件あたりの収集量:", ITERATIONS * NUM_ENVS * HORIZON, "チームステップ")
+print("1条件あたりの収集量:", TRAINING_STEPS, "チームステップ")
 """,
     ),
     (
@@ -332,40 +343,82 @@ media.show_video(iio.imread(next((RUN_DIR / "reference_video").glob("*.mp4"))), 
     ),
     (
         "code",
-        r"""models = {}
+        r"""from stable_baselines3 import PPO
+from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.logger import configure
+from hexapod_transport_rl import SharedTeamPolicy, ApproachCurriculum, bind_transport
+
+models = {}
 for name, config in conditions.items():
-    print("学習条件:", name)
-    models[name] = train_approach(
-        output=RUN_DIR / name,
-        pushing_checkpoint=PUSHER,
-        config=config,
-        iterations=ITERATIONS,
-        num_envs=NUM_ENVS,
-        horizon=HORIZON,
-        seed=TRAINING_SEED,
+    output = RUN_DIR / name
+    envs = make_vec_env(
+        "hexapod_transport_rl:HexapodApproach-v0",
+        n_envs=NUM_ENVS, seed=TRAINING_SEED,
+        env_kwargs={"config": replace(config, layout="near"), "flatten": True},
+        vec_env_cls=SubprocVecEnv, vec_env_kwargs={"start_method": "spawn"},
     )
+    model = PPO(
+        SharedTeamPolicy, envs, n_steps=HORIZON, batch_size=64,
+        n_epochs=4, ent_coef=0.005, policy_kwargs={"log_std_init": -1.0},
+        seed=TRAINING_SEED, device="cpu", verbose=1,
+    )
+    model.set_logger(configure(str(output), ["stdout", "csv"]))
+    curriculum = ApproachCurriculum(config=config, output=output)
+    checkpoints = CheckpointCallback(
+        save_freq=25 * NUM_ENVS * HORIZON, save_path=str(output / "checkpoints"),
+        name_prefix="navigation",
+    )
+    model.learn(total_timesteps=TRAINING_STEPS, callback=[curriculum, checkpoints])
+    model.save(output / "navigator")
+    models[name] = bind_transport(
+        output / "navigator.zip", PUSHER, output / "transport.json",
+        config=config, provenance=envs.get_attr("provenance")[0],
+    )
+    envs.close()
 """,
     ),
     (
         "markdown",
-        r"""`metrics.jsonl` に更新ごとの収集量・速度・カリキュラムが残ります。
-以下で実測速度と本学習の概算を確認します。検証や初期化にも時間がかかるため概算です。
+        r"""### 保存した方策を読み込み、観測から行動を決める
+`PPO.load()` で自分のモデルを読み込み、`model.predict(observation)` で行動を決めます。
+このセルでは行動を手で指定しません。`deterministic=True` は評価用に平均の行動を使います。
+SB3へ渡す `flatten=True` の回り込み環境は、観測が `(20,)`、行動が `(6,)` です。
+行動を `(2,3)` に並べると、各機に送る前後・左右・旋回の正規化値を確認できます。
+""",
+    ),
+    (
+        "code",
+        r"""model = PPO.load(RUN_DIR / "baseline/navigator.zip", device="cpu")
+env = gym.make("HexapodApproach-v0", config=replace(baseline_config, layout="front"), flatten=True)
+observation, info = env.reset(seed=83000)
+action, _ = model.predict(observation, deterministic=True)
+print("方策が決めた2台分の行動:", action.reshape(2, 3))
+observation, reward, terminated, truncated, info = env.step(action)
+print("報酬:", reward, "内訳:", info["reward_terms"])
+env.close()
+""",
+    ),
+    (
+        "markdown",
+        r"""SB3の `progress.csv` に収集量・学習速度・損失と、callbackが記録したカリキュラムが残ります。
+以下で実測速度と本学習の概算を確認します。速度には検証時間も含まれますが、CPUの性能や学習が進んだ後の配置で変わるため概算です。
 異なる報酬設計の総報酬の大小は、性能の良し悪しとして比較しません。
 """,
     ),
     (
         "code",
-        r"""import json
-import pandas as pd
+        r"""import pandas as pd
 
 training_logs = {}
 for name in conditions:
-    records = [json.loads(line) for line in (RUN_DIR / name / "metrics.jsonl").read_text().splitlines()]
-    training_logs[name] = pd.DataFrame(records)
-    display(training_logs[name].tail(3))
-    speed = training_logs[name]["transitions_per_second"].mean()
-    print(name, "学習速度:", round(speed, 1), "チームステップ/秒")
-    print("409600ステップの概算:", round(409600 / speed / 3600, 2), "時間/条件（検証等を除く）")
+    log = pd.read_csv(RUN_DIR / name / "progress.csv")
+    training_logs[name] = log
+    display(log.tail(3))
+    speed = log["time/fps"].iloc[-1]
+    print(name, "学習速度:", speed, "チームステップ/秒")
+    print("409600ステップの概算:", round(409600 / speed / 3600, 2), "時間/条件")
 """,
     ),
     (
@@ -489,8 +542,9 @@ media.show_videos(videos, fps=5, titles=list(models))
 5. 次に1つだけ変更して検証する条件。
 
 **拡張課題：押す段階の報酬を調べる場合**は、`PushRewardWeights` を `PushConfig(reward_weights=...)`
-へ渡せます。押す方策の追加学習では、`train_handover(..., reward_weights=...)` を使います。
-比較する両条件とも同じ元の押すcheckpointから開始し、同じ学習量で追加学習します。
+へ渡せます。押す方策を新しく学習する場合も、`gym.make("HexapodPush-v0", config=..., flatten=True)` と
+`PPO(SharedTeamPolicy, env, ...)` を使えます。旧MAPPOの `.pt` はSB3の初期重みとして直接読み込めません。
+比較する両条件とも同じ乱数seedから開始し、同じ学習量で比較します。
 回り込みと押す報酬を同時に変えると原因を切り分けにくいため、最初は片方ずつ調べてください。
 APIの詳細・再開方法は [教材ガイド](https://github.com/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/docs/colab-guide.md) にあります。
 """,

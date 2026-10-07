@@ -173,10 +173,45 @@ env.close()
 回り込みの観測は `(2, 10)`、行動は `(2, 3)` の−1〜1です。
 担当する左右の役割を反転した座標で行動を出し、内部で実際の機体速度へ戻します。
 中央critic用の `env.unwrapped.state()` は両機の観測を並べた `(20,)` です。
-`train_approach(config=config, ...)` へ同じ設定を渡すと、並列環境もその報酬で学習し、
-係数をcheckpointへ保存します。既存モデルの読み込みは従来の既定値を補います。
+学生の学習では、同じ設定をSB3の `make_vec_env(..., env_kwargs={"config": config, "flatten": True})` へ渡します。
+更新は `PPO(SharedTeamPolicy, envs, ...).learn(total_timesteps=...)` が担当します。
+モデルは `model.save()` で `.zip` に保存し、`bind_transport()` で報酬設定・共通の押すモデル・資産ハッシュを記録します。
+旧MAPPOモデルの読み込みは従来の既定値を補います。
 式は `rewards.approach_reward_terms()`、押す報酬は `PushConfig(reward_weights=PushRewardWeights(...))` で設定します。
 
 `evaluate_transport(checkpoint=..., output=..., episodes=..., seed=..., layout=...)` は
 回り込みから押すまでを評価し、物理的な成功・接触・転倒・誤差をJSONに保存して辞書を返します。
 異なる報酬の実験同士を比較するときは、総報酬ではなくこれらの指標を使います。
+
+## 外部ライブラリでの学習
+
+```python
+from stable_baselines3 import PPO
+from hexapod_transport_rl import SharedTeamPolicy
+
+env = gym.make("HexapodApproach-v0", config=config, flatten=True)
+model = PPO(SharedTeamPolicy, env, n_steps=64, batch_size=64, device="cpu", seed=42)
+model.learn(total_timesteps=256)
+model.save("navigator")
+observation, info = env.reset(seed=80000)
+action, _ = model.predict(observation, deterministic=True)
+observation, reward, terminated, truncated, info = env.step(action)
+env.close()
+```
+
+`SharedTeamPolicy` はネットワークの構造だけを指定します。actorは各機の局所観測で同じMLPを使い、
+探索の標準偏差3成分も共有します。criticは全機の観測を入力します。
+SB3の `MlpPolicy` をそのまま使うと、チーム全体の観測から全行動を出す中央actorになるため、この構造とは異なります。
+
+学生の並列学習はSB3の `make_vec_env()` と `SubprocVecEnv(start_method="spawn")` を使います。
+通常のGymnasium環境と異なり、SB3のVecEnvは `reset()` で観測のみ、`step()` で観測・報酬・done・infosを返し、
+終了した世界を自動resetします。学生の環境操作セルは通常のGymnasium API、
+並列学習の収集と時間切れの価値計算はSB3が担当します。
+
+`ApproachCurriculum` は初期配置と検証だけを扱うSB3 callbackです。
+`bind_transport(navigator_zip, pusher_pt, output_json, config=..., provenance=...)` は
+学習を行わず、運搬再生に必要な2モデルと設定を記録します。パスはJSONからの相対パスなので移動できます。
+JSONを `evaluate_transport(checkpoint=..., ...)` へ渡すと、新しいSB3回り込みモデルと共通の押す方策で評価します。
+
+同梱の旧MAPPO `.pt` はSB3の `.zip` と互換ではありません。学習済み歩行モデルと押す方策を固定し、
+回り込みactorをSB3でランダム初期化します。旧モデルは参考再生のために残しています。
