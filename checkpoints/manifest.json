@@ -1,0 +1,17 @@
+{
+  "base_pusher.pt": {
+    "source": "runs/train_T_mappo_20261006_refined/best_validation_checkpoint.pt",
+    "purpose": "Reward-trained pusher used to initialize navigation and handover learning",
+    "sha256": "b1f03a4882ab2c103f29f0af08f3921558ac0806f9033e41666b8a881aab0995"
+  },
+  "transport.pt": {
+    "source": "runs/walkaround_rl_result_20261006/transport.pt",
+    "purpose": "Selected learned navigator; paired with pusher.pt",
+    "sha256": "b895f5009579d84fb0f323d94cb20754246f7149365afc3840cd3e2a6d83903d"
+  },
+  "pusher.pt": {
+    "source": "runs/walkaround_rl_result_20261006/pusher.pt",
+    "purpose": "Selected learned pusher adapted to handover poses",
+    "sha256": "4955887423c2b77f5415be77c2e16613e2a77e918b9a8f91cfb7aa58aa9522e4"
+  }
+}

@@ -1,0 +1,199 @@
+<mujoco model="sixtrail1">
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <default>
+    <default class="sixtrail1">
+      <!-- joint conventions: coxa about +z (yaw), femur/tibia about +y (positive = leg down) -->
+      <default class="coxa_joint"><joint axis="0 0 1" range="-1.5708 1.5708"/></default>
+      <default class="femur_joint"><joint axis="0 1 0" range="-2.0944 2.0944"/></default>  <!-- widened from ±90°: hardware home stance has femur ~105° down (2026-09-02) -->
+      <default class="tibia_joint"><joint axis="0 1 0" range="-2.0944 2.0944"/></default>
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2" material="dark"/>
+      </default>
+      <default class="collision">
+        <geom group="3" type="box" contype="1" conaffinity="1"/>
+        <!-- per-link primitives (identical for the six legs, expressed in each link frame) -->
+        <default class="coxa_mount"><geom type="box" size="0.0176 0.0143 0.024" pos="-0.0064 0 0.001"/></default>
+        <default class="coxa0"><geom type="box" size="0.0275 0.0223 0.0184" pos="0.0595 -0.0012 0"/></default>
+        <default class="coxa1"><geom type="box" size="0.0175 0.012 0.023" pos="0.0145 0 0.001"/></default>
+        <default class="femur0"><geom type="box" size="0.033 0.023 0.0101" pos="0.03 0 0"/></default>
+        <default class="tibia0"><geom type="box" size="0.0255 0.0217 0.0143" pos="0.0145 -0.0017 0"/></default>
+        <default class="tibia1"><geom type="capsule" size="0.007" fromto="0.04 0 0 0.088 0 0"/></default>
+        <default class="foot"><geom type="sphere" size="0.005" pos="0.10525 0 0"/></default>
+      </default>
+    </default>
+  </default>
+
+  <asset>
+    <material name="dark" rgba="0.2 0.2 0.22 1"/>
+    <mesh class="sixtrail1" file="body.stl"/>
+    <mesh class="sixtrail1" file="coxa.stl"/>
+    <mesh class="sixtrail1" file="femur.stl"/>
+    <mesh class="sixtrail1" file="tibia.stl"/>
+  </asset>
+
+  <worldbody>
+    <body name="base" pos="0 0 0.154" childclass="sixtrail1">
+      <light pos="0 0 1.5" mode="trackcom"/>
+      <camera name="tracking" pos="0.7 -1.0 0.45" xyaxes="0.82 0.57 0 -0.25 0.36 0.9" mode="trackcom"/>
+      <camera name="side" pos="0 -0.9 0.25" xyaxes="1 0 0 0 0.3 1" mode="trackcom"/>
+      <freejoint name="floating_base_joint"/>
+      <inertial pos="-1.752e-06 0 -0.01881" mass="3.496" fullinertia="0.01452 0.03806 0.04988 0 5.954e-07 0"/>
+      <site name="imu" pos="0 0 0" quat="0.7071068 0 0 0.7071068" group="5"/>  <!-- WitMotion mounted yawed +90 deg: IMU x = body left (measured 2026-09-02) -->
+      <!-- Forward/down D435i optical frame proxy: 13 cm forward, pitched 35 deg down. -->
+      <site name="depth_camera" pos="0.13 0 0.02" quat="-0.6272114 -0.3265056 0.3265056 0.6272114" group="5"/>
+      <geom class="visual" mesh="body"/>
+      <geom name="base_collision0" class="collision" size="0.15 0.0755 0.029" pos="0 0 -0.019"/>
+      <geom name="base_collision1" class="coxa_mount" pos="0.1455 0.06547 -0.019" quat="0.92388 0 0 0.382683"/>  <!-- LF coxa servo mount -->
+      <geom name="base_collision2" class="coxa_mount" pos="0 0.0936 -0.019" quat="0.707107 0 0 0.707107"/>  <!-- LM coxa servo mount -->
+      <geom name="base_collision3" class="coxa_mount" pos="-0.1455 0.06547 -0.019" quat="0.382683 0 0 0.92388"/>  <!-- LH coxa servo mount -->
+      <geom name="base_collision4" class="coxa_mount" pos="0.1455 -0.06547 -0.019" quat="0.92388 0 0 -0.382683"/>  <!-- RF coxa servo mount -->
+      <geom name="base_collision5" class="coxa_mount" pos="0 -0.0936 -0.019" quat="0.707107 0 0 -0.707107"/>  <!-- RM coxa servo mount -->
+      <geom name="base_collision6" class="coxa_mount" pos="-0.1455 -0.06547 -0.019" quat="0.382683 0 0 -0.92388"/>  <!-- RH coxa servo mount -->
+      <body name="LF_coxa" pos="0.15 0.07 -0.02" quat="0.92388 0 0 0.382683">
+        <inertial pos="0.05422 -0.000401 7.604e-05" mass="0.68" fullinertia="0.0001565 0.0003309 0.000329 2.054e-06 2.024e-06 0"/>
+        <joint name="LF_coxa_joint" class="coxa_joint"/>
+        <geom class="visual" mesh="coxa"/>
+        <geom name="LF_coxa_collision0" class="coxa0"/>
+        <geom name="LF_coxa_collision1" class="coxa1"/>
+        <body name="LF_femur" pos="0.076 0 0">
+          <inertial pos="0.02733 0 0" mass="0.25" fullinertia="9.933e-05 6.842e-05 0.0001502 0 0 0"/>
+          <joint name="LF_femur_joint" class="femur_joint"/>
+          <geom class="visual" mesh="femur"/>
+          <geom name="LF_femur_collision0" class="femur0"/>
+          <body name="LF_tibia" pos="0.06 0 0">
+            <inertial pos="0.02077 -0.0004534 2.466e-06" mass="0.47" fullinertia="7.15e-05 0.000301 0.0003205 -1.968e-06 0 0"/>
+            <joint name="LF_tibia_joint" class="tibia_joint"/>
+            <geom class="visual" mesh="tibia"/>
+            <geom name="LF_tibia_collision0" class="tibia0"/>
+            <geom name="LF_tibia_collision1" class="tibia1"/>
+            <geom name="LF_foot_collision" class="foot"/>
+            <site name="LF" pos="0.10525 0 0" type="sphere" size="0.005" group="5"/>
+          </body>
+        </body>
+      </body>
+      <body name="LM_coxa" pos="0 0.1 -0.02" quat="0.707107 0 0 0.707107">
+        <inertial pos="0.05422 -0.000401 7.604e-05" mass="0.68" fullinertia="0.0001565 0.0003309 0.000329 2.054e-06 2.024e-06 0"/>
+        <joint name="LM_coxa_joint" class="coxa_joint"/>
+        <geom class="visual" mesh="coxa"/>
+        <geom name="LM_coxa_collision0" class="coxa0"/>
+        <geom name="LM_coxa_collision1" class="coxa1"/>
+        <body name="LM_femur" pos="0.076 0 0">
+          <inertial pos="0.02733 0 0" mass="0.25" fullinertia="9.933e-05 6.842e-05 0.0001502 0 0 0"/>
+          <joint name="LM_femur_joint" class="femur_joint"/>
+          <geom class="visual" mesh="femur"/>
+          <geom name="LM_femur_collision0" class="femur0"/>
+          <body name="LM_tibia" pos="0.06 0 0">
+            <inertial pos="0.02077 -0.0004534 2.466e-06" mass="0.47" fullinertia="7.15e-05 0.000301 0.0003205 -1.968e-06 0 0"/>
+            <joint name="LM_tibia_joint" class="tibia_joint"/>
+            <geom class="visual" mesh="tibia"/>
+            <geom name="LM_tibia_collision0" class="tibia0"/>
+            <geom name="LM_tibia_collision1" class="tibia1"/>
+            <geom name="LM_foot_collision" class="foot"/>
+            <site name="LM" pos="0.10525 0 0" type="sphere" size="0.005" group="5"/>
+          </body>
+        </body>
+      </body>
+      <body name="LH_coxa" pos="-0.15 0.07 -0.02" quat="0.382683 0 0 0.92388">
+        <inertial pos="0.05422 -0.000401 7.604e-05" mass="0.68" fullinertia="0.0001565 0.0003309 0.000329 2.054e-06 2.024e-06 0"/>
+        <joint name="LH_coxa_joint" class="coxa_joint"/>
+        <geom class="visual" mesh="coxa"/>
+        <geom name="LH_coxa_collision0" class="coxa0"/>
+        <geom name="LH_coxa_collision1" class="coxa1"/>
+        <body name="LH_femur" pos="0.076 0 0">
+          <inertial pos="0.02733 0 0" mass="0.25" fullinertia="9.933e-05 6.842e-05 0.0001502 0 0 0"/>
+          <joint name="LH_femur_joint" class="femur_joint"/>
+          <geom class="visual" mesh="femur"/>
+          <geom name="LH_femur_collision0" class="femur0"/>
+          <body name="LH_tibia" pos="0.06 0 0">
+            <inertial pos="0.02077 -0.0004534 2.466e-06" mass="0.47" fullinertia="7.15e-05 0.000301 0.0003205 -1.968e-06 0 0"/>
+            <joint name="LH_tibia_joint" class="tibia_joint"/>
+            <geom class="visual" mesh="tibia"/>
+            <geom name="LH_tibia_collision0" class="tibia0"/>
+            <geom name="LH_tibia_collision1" class="tibia1"/>
+            <geom name="LH_foot_collision" class="foot"/>
+            <site name="LH" pos="0.10525 0 0" type="sphere" size="0.005" group="5"/>
+          </body>
+        </body>
+      </body>
+      <body name="RF_coxa" pos="0.15 -0.07 -0.02" quat="0.92388 0 0 -0.382683">
+        <inertial pos="0.05422 -0.000401 7.604e-05" mass="0.68" fullinertia="0.0001565 0.0003309 0.000329 2.054e-06 2.024e-06 0"/>
+        <joint name="RF_coxa_joint" class="coxa_joint"/>
+        <geom class="visual" mesh="coxa"/>
+        <geom name="RF_coxa_collision0" class="coxa0"/>
+        <geom name="RF_coxa_collision1" class="coxa1"/>
+        <body name="RF_femur" pos="0.076 0 0">
+          <inertial pos="0.02733 0 0" mass="0.25" fullinertia="9.933e-05 6.842e-05 0.0001502 0 0 0"/>
+          <joint name="RF_femur_joint" class="femur_joint"/>
+          <geom class="visual" mesh="femur"/>
+          <geom name="RF_femur_collision0" class="femur0"/>
+          <body name="RF_tibia" pos="0.06 0 0">
+            <inertial pos="0.02077 -0.0004534 2.466e-06" mass="0.47" fullinertia="7.15e-05 0.000301 0.0003205 -1.968e-06 0 0"/>
+            <joint name="RF_tibia_joint" class="tibia_joint"/>
+            <geom class="visual" mesh="tibia"/>
+            <geom name="RF_tibia_collision0" class="tibia0"/>
+            <geom name="RF_tibia_collision1" class="tibia1"/>
+            <geom name="RF_foot_collision" class="foot"/>
+            <site name="RF" pos="0.10525 0 0" type="sphere" size="0.005" group="5"/>
+          </body>
+        </body>
+      </body>
+      <body name="RM_coxa" pos="0 -0.1 -0.02" quat="0.707107 0 0 -0.707107">
+        <inertial pos="0.05422 -0.000401 7.604e-05" mass="0.68" fullinertia="0.0001565 0.0003309 0.000329 2.054e-06 2.024e-06 0"/>
+        <joint name="RM_coxa_joint" class="coxa_joint"/>
+        <geom class="visual" mesh="coxa"/>
+        <geom name="RM_coxa_collision0" class="coxa0"/>
+        <geom name="RM_coxa_collision1" class="coxa1"/>
+        <body name="RM_femur" pos="0.076 0 0">
+          <inertial pos="0.02733 0 0" mass="0.25" fullinertia="9.933e-05 6.842e-05 0.0001502 0 0 0"/>
+          <joint name="RM_femur_joint" class="femur_joint"/>
+          <geom class="visual" mesh="femur"/>
+          <geom name="RM_femur_collision0" class="femur0"/>
+          <body name="RM_tibia" pos="0.06 0 0">
+            <inertial pos="0.02077 -0.0004534 2.466e-06" mass="0.47" fullinertia="7.15e-05 0.000301 0.0003205 -1.968e-06 0 0"/>
+            <joint name="RM_tibia_joint" class="tibia_joint"/>
+            <geom class="visual" mesh="tibia"/>
+            <geom name="RM_tibia_collision0" class="tibia0"/>
+            <geom name="RM_tibia_collision1" class="tibia1"/>
+            <geom name="RM_foot_collision" class="foot"/>
+            <site name="RM" pos="0.10525 0 0" type="sphere" size="0.005" group="5"/>
+          </body>
+        </body>
+      </body>
+      <body name="RH_coxa" pos="-0.15 -0.07 -0.02" quat="0.382683 0 0 -0.92388">
+        <inertial pos="0.05422 -0.000401 7.604e-05" mass="0.68" fullinertia="0.0001565 0.0003309 0.000329 2.054e-06 2.024e-06 0"/>
+        <joint name="RH_coxa_joint" class="coxa_joint"/>
+        <geom class="visual" mesh="coxa"/>
+        <geom name="RH_coxa_collision0" class="coxa0"/>
+        <geom name="RH_coxa_collision1" class="coxa1"/>
+        <body name="RH_femur" pos="0.076 0 0">
+          <inertial pos="0.02733 0 0" mass="0.25" fullinertia="9.933e-05 6.842e-05 0.0001502 0 0 0"/>
+          <joint name="RH_femur_joint" class="femur_joint"/>
+          <geom class="visual" mesh="femur"/>
+          <geom name="RH_femur_collision0" class="femur0"/>
+          <body name="RH_tibia" pos="0.06 0 0">
+            <inertial pos="0.02077 -0.0004534 2.466e-06" mass="0.47" fullinertia="7.15e-05 0.000301 0.0003205 -1.968e-06 0 0"/>
+            <joint name="RH_tibia_joint" class="tibia_joint"/>
+            <geom class="visual" mesh="tibia"/>
+            <geom name="RH_tibia_collision0" class="tibia0"/>
+            <geom name="RH_tibia_collision1" class="tibia1"/>
+            <geom name="RH_foot_collision" class="foot"/>
+            <site name="RH" pos="0.10525 0 0" type="sphere" size="0.005" group="5"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <sensor>
+    <gyro name="imu_ang_vel" site="imu"/>
+    <velocimeter name="imu_lin_vel" site="imu"/>
+    <accelerometer name="imu_lin_acc" site="imu"/>
+    <framezaxis name="imu_upvector" objtype="body" objname="world" reftype="site" refname="imu"/>
+    <subtreeangmom name="root_angmom" body="base"/>
+  </sensor>
+
+  <keyframe>
+    <key name="home" qpos="0 0 0.154 1 0 0 0 0 0.45 0.9 0 0.45 0.9 0 0.45 0.9 0 0.45 0.9 0 0.45 0.9 0 0.45 0.9"/>
+  </keyframe>
+</mujoco>

@@ -1,0 +1,16 @@
+{
+  "robot_source": "sixtrail_flat_rl/src/sixtrail_flat_rl/assets/sixtrail",
+  "walking_source": "sixtrail_flat_rl/policies/sixtrail_commands_v2",
+  "walking_checkpoint_iteration": 1800,
+  "scope": "Concrete 18-joint hexapod benchmark; high-level transport is learned, low-level walking stays frozen.",
+  "sha256": {
+    "locomotion/actor.ts": "61364cbb4731d7da8d5a2208457f277b81c6771daac448612efbacfd85617116",
+    "locomotion/controller.ts": "98b4701b8e1296ab33ac33f20339f8b13fa41ced177699bc91ecd1a71fbcd82c",
+    "locomotion/policy.json": "9e2bb12537275104591f147ce6f8a370627b04ad7bf9ad5a445867040ed62f03",
+    "robot/meshes/body.stl": "f0194c0b7007dc53cb16cf221ab2024cbcc773e1fe41233be88e88e408ed6f47",
+    "robot/meshes/coxa.stl": "5eaadb9e114272208f9860f2dda9ef34459108099f2156c8f3b27acf2d7d67c5",
+    "robot/meshes/femur.stl": "bf1247c9c3dbc86ad90fc23c3a82a7049318d0201ef863d4608f20b78f0aefe9",
+    "robot/meshes/tibia.stl": "12285111126862abf380b338a273bbf0a6c5a4b085cf51bc6804432edf49c123",
+    "robot/robot.xml": "58bed5a59c483ee607526ce299afa418ce78ae730de2978a56da7ef9c4f447d5"
+  }
+}

@@ -1,0 +1,183 @@
+{
+  "task": "Mjlab-Velocity-Flat-Sixtrail",
+  "source_checkpoint": "/home/hashimoto/2026/10/sixtrail_flat_rl/logs/rsl_rl/sixtrail_flat/2026-10-05_16-27-53_command_refine_v3/model_1800.pt",
+  "checkpoint_iteration": 1800,
+  "control_hz": 25,
+  "physics_hz_training": 200,
+  "actor_input": {
+    "shape": [
+      "batch",
+      63
+    ],
+    "dtype": "float32",
+    "normalization_included": true,
+    "terms": [
+      {
+        "name": "gyro_imu",
+        "slice": [
+          0,
+          3
+        ],
+        "unit": "rad/s"
+      },
+      {
+        "name": "gravity_body",
+        "slice": [
+          3,
+          6
+        ],
+        "unit": "unit vector"
+      },
+      {
+        "name": "joint_pos_relative",
+        "slice": [
+          6,
+          24
+        ],
+        "unit": "rad"
+      },
+      {
+        "name": "joint_vel",
+        "slice": [
+          24,
+          42
+        ],
+        "unit": "rad/s"
+      },
+      {
+        "name": "previous_clipped_action",
+        "slice": [
+          42,
+          60
+        ]
+      },
+      {
+        "name": "command_vx_vy_wz",
+        "slice": [
+          60,
+          63
+        ]
+      }
+    ]
+  },
+  "joint_names": [
+    "LF_coxa_joint",
+    "LF_femur_joint",
+    "LF_tibia_joint",
+    "LM_coxa_joint",
+    "LM_femur_joint",
+    "LM_tibia_joint",
+    "LH_coxa_joint",
+    "LH_femur_joint",
+    "LH_tibia_joint",
+    "RF_coxa_joint",
+    "RF_femur_joint",
+    "RF_tibia_joint",
+    "RM_coxa_joint",
+    "RM_femur_joint",
+    "RM_tibia_joint",
+    "RH_coxa_joint",
+    "RH_femur_joint",
+    "RH_tibia_joint"
+  ],
+  "action_joint_names": [
+    "LF_coxa_joint",
+    "LF_femur_joint",
+    "LF_tibia_joint",
+    "LM_coxa_joint",
+    "LM_femur_joint",
+    "LM_tibia_joint",
+    "LH_coxa_joint",
+    "LH_femur_joint",
+    "LH_tibia_joint",
+    "RF_coxa_joint",
+    "RF_femur_joint",
+    "RF_tibia_joint",
+    "RM_coxa_joint",
+    "RM_femur_joint",
+    "RM_tibia_joint",
+    "RH_coxa_joint",
+    "RH_femur_joint",
+    "RH_tibia_joint"
+  ],
+  "reference_joint_position_rad": [
+    0.0,
+    0.44999998807907104,
+    0.8999999761581421,
+    0.0,
+    0.44999998807907104,
+    0.8999999761581421,
+    0.0,
+    0.44999998807907104,
+    0.8999999761581421,
+    0.0,
+    0.44999998807907104,
+    0.8999999761581421,
+    0.0,
+    0.44999998807907104,
+    0.8999999761581421,
+    0.0,
+    0.44999998807907104,
+    0.8999999761581421
+  ],
+  "action_scale_rad": 0.3,
+  "action_clip": [
+    -3.0,
+    3.0
+  ],
+  "previous_action_at_reset": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "command_ranges": [
+    [
+      -0.15,
+      0.2
+    ],
+    [
+      -0.1,
+      0.1
+    ],
+    [
+      -0.6,
+      0.6
+    ]
+  ],
+  "forward_axis": "+X",
+  "actuator": "XM430 voltage P loop (P=800), dcmotor, nominal supply 11.5 V",
+  "imu_frame": "IMU mount yaw +90 degrees; gyro remains in IMU frame",
+  "gravity_frame": "body; level=[0,0,-1]; derive from IMU attitude estimate",
+  "actor_output": "Raw action; clip, then target = reference + 0.3 * action.",
+  "controller_inputs": "q (rad), qdot (rad/s), previous clipped action, command, gyro_imu, gravity_body; all batched. JointOnly ignores the last two inputs.",
+  "controller_outputs": "(target_joint_position_rad, clipped_action); feed clipped_action back next step.",
+  "inference_equivalence": {
+    "batches": [
+      1,
+      16,
+      192
+    ],
+    "max_abs_error": 0.0
+  },
+  "scope": "Flat-ground simulation policy. Hardware validation not performed.",
+  "sha256": {
+    "actor.ts": "61364cbb4731d7da8d5a2208457f277b81c6771daac448612efbacfd85617116",
+    "controller.ts": "98b4701b8e1296ab33ac33f20339f8b13fa41ced177699bc91ecd1a71fbcd82c",
+    "checkpoint.pt": "1d8425584eaaeae34615e2caafe199097d97200d0653c2869ad5936cd0ff55ef"
+  }
+}
