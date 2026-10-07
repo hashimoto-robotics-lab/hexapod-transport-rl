@@ -17,7 +17,7 @@ def _train_push(resume=None, asset_root=None, **kwargs):
     cfg = PushConfig(shape="T")
     if resume:
         _, saved = load_checkpoint(resume)
-        cfg = PushConfig(**saved["config"])
+        cfg = PushConfig.from_checkpoint(saved["config"])
     return train(cfg, asset_root, resume=resume, **kwargs)
 
 

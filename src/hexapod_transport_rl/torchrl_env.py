@@ -13,14 +13,15 @@ from torchrl.envs import EnvBase
 
 from .approach import ApproachConfig, make_approach_vector
 from .config import PushConfig
+from .pose_push import PosePushConfig, make_pose_vector
 from .vector import make_vector_env
 
 
 class TorchRLTransportEnv(EnvBase):
     """CPU MuJoCo worlds, optionally collected in independent spawn workers.
 
-    ``config=ApproachConfig(...)`` selects two-robot navigation;
-    ``config=PushConfig(...)`` selects pushing with two to four robots.
+    ``config=PosePushConfig(...)`` selects target-pose pushing (two to four robots).
+    ``PushConfig`` selects basic pushing; ``ApproachConfig`` is historical navigation.
     ``num_envs`` counts independent worlds, not robots.
     """
 
@@ -37,6 +38,10 @@ class TorchRLTransportEnv(EnvBase):
         super().__init__(device="cpu", batch_size=[num_envs])
         if isinstance(config, ApproachConfig):
             self.worlds = make_approach_vector(
+                config, num_envs, asset_root, asynchronous=asynchronous
+            )
+        elif isinstance(config, PosePushConfig):
+            self.worlds = make_pose_vector(
                 config, num_envs, asset_root, asynchronous=asynchronous
             )
         elif isinstance(config, PushConfig):
@@ -121,6 +126,12 @@ class TorchRLTransportEnv(EnvBase):
         if not isinstance(self.config, ApproachConfig):
             raise TypeError("Only approach environments have a layout curriculum")
         self.worlds.call("set_layout", layout)
+
+    def set_stage(self, stage):
+        """Change pose-task reset difficulty without editing active worlds."""
+        if not isinstance(self.config, PosePushConfig):
+            raise TypeError("Stages require PosePushConfig")
+        self.worlds.call("set_stage", stage)
 
     def close(self, *, raise_if_closed=True):
         if not self.is_closed:

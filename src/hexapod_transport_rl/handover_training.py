@@ -87,8 +87,8 @@ def compose(
     _, _, nav_saved = load_approach_checkpoint(navigation_checkpoint)
     _, push_saved = load_checkpoint(pushing_checkpoint)
     _, original_push = load_checkpoint(nav_saved["pushing_checkpoint"])
-    original_config = asdict(PushConfig(**original_push["config"]))
-    new_config = asdict(PushConfig(**push_saved["config"]))
+    original_config = asdict(PushConfig.from_checkpoint(original_push["config"]))
+    new_config = asdict(PushConfig.from_checkpoint(push_saved["config"]))
     original_config.pop("reward_weights")
     new_config.pop("reward_weights")
     if original_config != new_config:
@@ -131,7 +131,7 @@ def train_handover(
     torch.manual_seed(seed)
     np.random.seed(seed)
     _, saved = load_checkpoint(checkpoint)
-    cfg = PushConfig(**saved["config"])
+    cfg = PushConfig.from_checkpoint(saved["config"])
     if reward_weights is not None:
         cfg = replace(cfg, reward_weights=reward_weights)
     if cfg.num_robots != 2 or cfg.shape != "T":

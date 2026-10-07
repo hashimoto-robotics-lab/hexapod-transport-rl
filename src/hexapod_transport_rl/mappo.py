@@ -460,7 +460,7 @@ def train_rollouts(
     transitions = 0
     if resume:
         agent, saved = load_checkpoint(resume)
-        saved_config = PushConfig(**saved["config"])
+        saved_config = PushConfig.from_checkpoint(saved["config"])
         if allow_reward_change:
             saved_config = replace(saved_config, reward_weights=cfg.reward_weights)
         if (

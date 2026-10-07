@@ -26,6 +26,8 @@ class HexapodPushEnv(gym.Env):
     termination/truncation, so timeout bootstrapping is possible before reset.
     """
 
+    core_type = PushEnv
+
     metadata = {"render_modes": ["rgb_array", "human"], "render_fps": 5}
 
     def __init__(
@@ -53,7 +55,7 @@ class HexapodPushEnv(gym.Env):
             config = PushConfig(**config)
         if config is not None and not isinstance(config, PushConfig):
             raise TypeError("config must be PushConfig, dict, or None")
-        self.core = PushEnv(config, asset_root)
+        self.core = self.core_type(config, asset_root)
         self.config = self.core.cfg
         self.num_robots = self.config.num_robots
         self.agent_ids = tuple(f"robot_{i}" for i in range(self.num_robots))

@@ -66,7 +66,10 @@ def _load_evaluation_task(
         saved["pushing_checkpoint"], weights_only=True, map_location="cpu"
     )
     core = PushEnv(
-        replace(PushConfig(**pushing_saved["config"]), episode_seconds=episode_seconds),
+        replace(
+            PushConfig.from_checkpoint(pushing_saved["config"]),
+            episode_seconds=episode_seconds,
+        ),
         asset_root,
     )
     provenance = saved["run"]["provenance"]

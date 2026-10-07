@@ -139,6 +139,10 @@ def test_reward_parameters_flow_directly_to_training_and_paired_evaluation():
     assert "train_approach(" not in source
     assert "reward_weights=changed_reward" in source
     assert "seed=TRAINING_SEED" in source
-    assert "seed=seed" in source
+    assert "seed=TEST_SEED" in source
+    assert "PoseCurriculum(" in source
+    assert 'policy in ("forward", "feedback")' in source
+    assert "pushing_checkpoint=" not in source
+    assert 'gym.make("HexapodPosePush-v0"' in source
     assert "comparison.to_csv" in source
     assert "media.show_videos" in source

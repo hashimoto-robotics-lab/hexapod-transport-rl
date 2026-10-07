@@ -68,3 +68,24 @@ def approach_reward_terms(
         "cargo_displacement": -weights.cargo_displacement * cargo_displacement,
         "terminal": weights.success if success else weights.failure if failed else 0.0,
     }
+
+
+@dataclass(frozen=True)
+class PoseRewardWeights:
+    """Target-pose improvements and settling; independent of actions from demos."""
+
+    position: float = 4.0
+    position_error: float = 8.0
+    orientation: float = 3.0
+    approach: float = 0.2
+    settling: float = 1.0
+    command_change: float = 0.01
+    time: float = 0.02
+    robot_contact: float = 0.5
+    body_contact: float = 6.0
+    success: float = 20.0
+    failure: float = -10.0
+
+    def __post_init__(self):
+        if not all(isfinite(value) for value in astuple(self)):
+            raise ValueError("Reward coefficients must be finite")

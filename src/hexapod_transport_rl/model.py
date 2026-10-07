@@ -178,6 +178,30 @@ def _add_cargo(world: ET.Element, cfg: PushConfig, all_bits: int) -> ET.Element:
             mass=str(cfg.cargo_mass),
             **common,
         )
+    elif cfg.t_geometry == "equal_arms":
+        # Origin is the centerline junction. All three endpoints are L away.
+        thickness = 0.2
+        arm = cfg.t_arm_length
+        stem_length = arm - thickness / 2
+        fraction = cfg.width / (cfg.width + stem_length)
+        ET.SubElement(
+            cargo,
+            "geom",
+            name="cargo_bar",
+            pos="0 0 0",
+            size=f"{thickness / 2} {arm} {half_height}",
+            mass=str(cfg.cargo_mass * fraction),
+            **common,
+        )
+        ET.SubElement(
+            cargo,
+            "geom",
+            name="cargo_stem",
+            pos=f"{thickness / 2 + stem_length / 2} 0 0",
+            size=f"{stem_length / 2} {thickness / 2} {half_height}",
+            mass=str(cfg.cargo_mass * (1 - fraction)),
+            **common,
+        )
     else:
         # Non-overlapping bar and stem; uniform density over the T footprint.
         fraction = cfg.width * 0.2 / (cfg.width * 0.2 + 0.25 * 0.5)

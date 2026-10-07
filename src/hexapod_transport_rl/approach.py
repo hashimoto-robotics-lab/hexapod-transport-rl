@@ -264,7 +264,9 @@ class ApproachEnv(HexapodPushEnv):
             raise TypeError("config must be ApproachConfig, dict, or None")
         approach_config = config or ApproachConfig()
         super().__init__(
-            PushConfig(shape="T", episode_seconds=approach_config.seconds),
+            PushConfig(
+                shape="T", t_geometry="legacy", episode_seconds=approach_config.seconds
+            ),
             asset_root,
             render_mode=render_mode,
             flatten=flatten,

@@ -78,7 +78,7 @@ class ApproachCurriculum:
         if resume is not None:
             if (
                 ApproachConfig(**resume["approach_config"]) != config
-                or resume["training"]["settings"] != asdict(settings)
+                or MAPPOSettings(**resume["training"]["settings"]) != settings
                 or resume["training"]["curriculum"] != list(self.layouts)
             ):
                 raise ValueError("Resume requires the same reward and MAPPO settings")

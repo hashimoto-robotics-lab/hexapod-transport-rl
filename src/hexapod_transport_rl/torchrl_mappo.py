@@ -16,15 +16,35 @@ from tensordict import TensorDict
 from tensordict.nn import TensorDictModule
 from torch import nn
 from torchrl.envs.utils import ExplorationType
-from torchrl.modules import MultiAgentMLP, ProbabilisticActor, TanhNormal
+from torchrl.modules import (
+    MultiAgentMLP,
+    PopArtValueNorm,
+    ProbabilisticActor,
+    TanhNormal,
+)
 from torchrl.objectives import MAPPOLoss
 
 from .approach import ApproachConfig
 from .config import PushConfig
 from .mappo import load_checkpoint
+from .pose_push import PosePushConfig
 
 FORMAT = "hexapod-approach-torchrl-mappo-v1"
+POSE_FORMAT = "hexapod-pose-push-torchrl-mappo-v1"
 NETWORK = dict(hidden_units=[128, 128], initial_log_std=-1.0)
+
+
+def _native_metadata(value):
+    """Keep checkpoint metadata compatible with weights_only=True loading."""
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {key: _native_metadata(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_native_metadata(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_native_metadata(item) for item in value)
+    return value
 
 
 @dataclass(frozen=True)
@@ -40,8 +60,18 @@ class MAPPOSettings:
     entropy_coeff: float = 0.005
     critic_coeff: float = 0.5
     max_grad_norm: float = 0.5
+    initial_log_std: float = -1.0
+    value_normalization: bool = False
+    final_log_std: float | None = None
 
     def __post_init__(self):
+        if not np.isfinite(self.initial_log_std):
+            raise ValueError("Initial log standard deviation must be finite")
+        if self.final_log_std is not None and (
+            not np.isfinite(self.final_log_std)
+            or self.final_log_std > self.initial_log_std
+        ):
+            raise ValueError("Final exploration scale must be finite and no larger")
         if self.epochs < 1 or self.minibatch_size < 2:
             raise ValueError(
                 "Positive epochs and at least two minibatch worlds required"
@@ -59,7 +89,9 @@ class MAPPOSettings:
             raise ValueError("MAPPO settings must be finite and nonnegative")
 
 
-def make_mappo_loss(actor, critic, settings: MAPPOSettings):
+def make_mappo_loss(
+    actor, critic, settings: MAPPOSettings, *, value_normalizer_state=None
+):
     """Configure TorchRL's MAPPO loss and multi-agent GAE, without reimplementing them."""
     loss = MAPPOLoss(
         actor,
@@ -69,7 +101,12 @@ def make_mappo_loss(actor, critic, settings: MAPPOSettings):
         entropy_coeff=settings.entropy_coeff,
         critic_coeff=settings.critic_coeff,
         loss_critic_type="smooth_l1",
+        value_norm=PopArtValueNorm(shape=1) if settings.value_normalization else None,
     )
+    if value_normalizer_state is not None:
+        if loss.value_norm is None:
+            raise ValueError("Normalizer state requires value_normalization=True")
+        loss.value_norm.load_state_dict(value_normalizer_state)
     loss.set_keys(
         value=("agents", "state_value"),
         action=("agents", "action"),
@@ -84,15 +121,37 @@ def make_mappo_loss(actor, critic, settings: MAPPOSettings):
 class SharedScale(nn.Module):
     """Learn the same three exploration scales for every robot."""
 
-    def __init__(self):
+    def __init__(self, initial_log_std=NETWORK["initial_log_std"]):
         super().__init__()
-        self.log_std = nn.Parameter(torch.full((3,), NETWORK["initial_log_std"]))
+        if not np.isfinite(initial_log_std):
+            raise ValueError("Initial log standard deviation must be finite")
+        self.log_std = nn.Parameter(torch.full((3,), float(initial_log_std)))
 
     def forward(self, loc):
         return loc, self.log_std.exp().expand_as(loc)
 
 
-def make_mappo_networks(num_robots=2, obs_dim=10):
+@torch.no_grad()
+def anneal_exploration(actor, settings: MAPPOSettings, progress: float):
+    """Cap Gaussian noise after PPO updates, before the next collection.
+
+    Progress is the fraction of the fixed training budget already collected.
+    The learned mean still supplies every action; no controller is introduced.
+    """
+    if settings.final_log_std is None:
+        return
+    fraction = float(np.clip(progress, 0, 1))
+    cap = settings.initial_log_std + fraction * (
+        settings.final_log_std - settings.initial_log_std
+    )
+    for module in actor.modules():
+        if isinstance(module, SharedScale):
+            module.log_std.clamp_(max=cap)
+
+
+def make_mappo_networks(
+    num_robots=2, obs_dim=10, *, initial_log_std=NETWORK["initial_log_std"]
+):
     """Return TorchRL actor and critic; each robot has three bounded actions."""
     actor_mlp = MultiAgentMLP(
         n_agent_inputs=obs_dim,
@@ -105,7 +164,7 @@ def make_mappo_networks(num_robots=2, obs_dim=10):
     )
     actor = ProbabilisticActor(
         module=TensorDictModule(
-            nn.Sequential(actor_mlp, SharedScale()),
+            nn.Sequential(actor_mlp, SharedScale(initial_log_std)),
             in_keys=[("agents", "observation")],
             out_keys=[("agents", "loc"), ("agents", "scale")],
         ),
@@ -153,69 +212,90 @@ def save_mappo(
     critic,
     optimizer,
     *,
-    config: ApproachConfig,
-    pushing_checkpoint: str | Path,
+    config: ApproachConfig | PosePushConfig,
+    pushing_checkpoint: str | Path | None = None,
     provenance: dict,
     training: dict,
     curriculum: dict,
+    loss=None,
 ) -> Path:
-    """Save learned weights and the frozen pusher's relative path for evaluation."""
+    """Save a pose policy, or a historical approach policy with its frozen pusher."""
     path = Path(path).resolve()
-    pushing_checkpoint = Path(pushing_checkpoint).resolve()
-    actual_config = ApproachConfig(**provenance["approach_config"])
-    # The initial training layout may be near while the comparison config is mixed.
-    if replace(config, layout=actual_config.layout) != actual_config:
-        raise ValueError("Saved reward/reset settings differ from the training world")
-    # Saving must not change the next exploration sample. Constructing the old
-    # pusher for validation initializes parameters before loading its weights.
-    with torch.random.fork_rng(devices=[]):
-        _, pushing_saved = load_checkpoint(pushing_checkpoint)
-    pushing_config = PushConfig(**pushing_saved["config"])
-    if pushing_config.num_robots != 2 or pushing_config.shape != "T":
-        raise ValueError("Expected the frozen two-robot T pusher")
-    for key in ("low_level_sha256", "robot_xml_sha256"):
-        if provenance[key] != pushing_saved[key]:
-            raise ValueError("Navigation and pushing assets differ")
+    normalizer = None if loss is None else loss.value_norm
+    if training.get("settings", {}).get("value_normalization") and normalizer is None:
+        raise ValueError("Pass loss to save its value normalizer for resuming")
+    if isinstance(config, PosePushConfig):
+        if PosePushConfig(**provenance["pose_config"]) != config:
+            raise ValueError("Saved pose config differs from the training world")
+        extra = dict(pose_config=asdict(config))
+        file_format, num_robots = POSE_FORMAT, config.num_robots
+        obs_dim = 18 + 4 * (num_robots - 1)
+    else:
+        pushing_checkpoint = Path(pushing_checkpoint).resolve()
+        actual_config = ApproachConfig(**provenance["approach_config"])
+        if replace(config, layout=actual_config.layout) != actual_config:
+            raise ValueError(
+                "Saved reward/reset settings differ from the training world"
+            )
+        with torch.random.fork_rng(devices=[]):
+            _, pushing_saved = load_checkpoint(pushing_checkpoint)
+        pushing_config = PushConfig.from_checkpoint(pushing_saved["config"])
+        if pushing_config.num_robots != 2 or pushing_config.shape != "T":
+            raise ValueError("Expected the frozen two-robot T pusher")
+        for key in ("low_level_sha256", "robot_xml_sha256"):
+            if provenance[key] != pushing_saved[key]:
+                raise ValueError("Navigation and pushing assets differ")
+        extra = dict(
+            approach_config=asdict(config),
+            pushing_checkpoint=os.path.relpath(pushing_checkpoint, path.parent),
+            pushing_sha256=hashlib.sha256(pushing_checkpoint.read_bytes()).hexdigest(),
+        )
+        file_format, num_robots, obs_dim = FORMAT, 2, 10
     saved = dict(
-        format=FORMAT,
+        format=file_format,
         torchrl=torchrl.__version__,
         network=NETWORK,
-        num_robots=2,
-        obs_dim=10,
+        num_robots=num_robots,
+        obs_dim=obs_dim,
         actor=actor.state_dict(),
         critic=critic.state_dict(),
         optimizer=optimizer.state_dict(),
         training=training,
         curriculum=curriculum,
-        approach_config=asdict(config),
-        pushing_checkpoint=os.path.relpath(pushing_checkpoint, path.parent),
-        pushing_sha256=hashlib.sha256(pushing_checkpoint.read_bytes()).hexdigest(),
         run=dict(provenance=provenance, algorithm="TorchRL MAPPO"),
         torch_rng_state=torch.get_rng_state(),
+        value_normalizer=None if normalizer is None else normalizer.state_dict(),
+        **extra,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
-    torch.save(saved, temporary)
+    torch.save(_native_metadata(saved), temporary)
     temporary.replace(path)
     return path
 
 
 def load_mappo(path: str | Path):
-    """Load TorchRL actor, critic and training metadata, verifying the pusher."""
+    """Load TorchRL weights and metadata; historical approach files verify their pusher."""
     path = Path(path).resolve()
     saved = torch.load(path, weights_only=True, map_location="cpu")
-    if (
-        saved.get("format") != FORMAT
-        or saved.get("num_robots") != 2
-        or saved.get("obs_dim") != 10
-        or saved.get("network") != NETWORK
-    ):
-        raise ValueError("Expected a two-robot TorchRL approach checkpoint")
-    pusher = (path.parent / saved["pushing_checkpoint"]).resolve()
-    if hashlib.sha256(pusher.read_bytes()).hexdigest() != saved["pushing_sha256"]:
-        raise ValueError("Frozen pushing checkpoint has changed")
-    saved["pushing_checkpoint"] = str(pusher)
-    actor, critic = make_mappo_networks()
+    if saved.get("network") != NETWORK:
+        raise ValueError("Unrecognized TorchRL network architecture")
+    if saved.get("format") == POSE_FORMAT:
+        config = PosePushConfig(**saved["pose_config"])
+        if saved.get("num_robots") != config.num_robots or saved.get(
+            "obs_dim"
+        ) != 18 + 4 * (config.num_robots - 1):
+            raise ValueError("Pose checkpoint has an inconsistent observation layout")
+    elif saved.get("format") == FORMAT:
+        if saved.get("num_robots") != 2 or saved.get("obs_dim") != 10:
+            raise ValueError("Expected a two-robot TorchRL approach checkpoint")
+        pusher = (path.parent / saved["pushing_checkpoint"]).resolve()
+        if hashlib.sha256(pusher.read_bytes()).hexdigest() != saved["pushing_sha256"]:
+            raise ValueError("Frozen pushing checkpoint has changed")
+        saved["pushing_checkpoint"] = str(pusher)
+    else:
+        raise ValueError("Unrecognized TorchRL checkpoint format")
+    actor, critic = make_mappo_networks(saved["num_robots"], saved["obs_dim"])
     actor.load_state_dict(saved["actor"])
     critic.load_state_dict(saved["critic"])
     if any(

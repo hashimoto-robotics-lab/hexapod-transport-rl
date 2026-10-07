@@ -1,153 +1,98 @@
-# 学生向けColab：報酬設計の比較実験
+# Colabで報酬設計を比較する
 
-[ノートブックを開く](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_colab.ipynb)。公開リポジトリなのでGitHub認証は不要です。
-CPUランタイム、Python 3.12・3.13に対応します。最初の準備以外は通常のライブラリ呼び出しです。
-学習もアクティブなカーネルから開始し、独立した物理世界だけを子プロセスで並列実行します。
+[学生用Colab](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_colab.ipynb)を新しいCPUランタイムで開き、上から実行します。
+GitHubの認証は不要です。既に取得したコードは学生の編集を残すため上書きしません。
+古い教材を使っている場合は、新規ランタイムで始めてください。
 
-## 教材で理解すること
+研究の動機、学習済み歩行モデルへの指令、運搬Gym API、報酬、MAPPO学習、評価・動画の順です。
+`with`構文や独自の実行クラスは使わず、普通のimportとセルで進めます。動画はmediapyで表示します。
 
-1. 研究の動機と、固定した歩行モデル・学習する速度指令方策の関係。
-2. `gym.make("HexapodWalking-v0")` での物理速度コマンドとmediapyでの歩行観察。
-3. `gym.make("HexapodApproach-v0")` の観測・正規化行動・チーム報酬・終了条件。
-4. `info["reward_terms"]` と実際に使う報酬関数の対応。
-5. 1つの係数を変更した仮説と、同じ学習条件での比較。
-6. 共通のテストseedによる成功・接触・転倒・位置誤差・所要時間と動画の評価。
+## 課題と学習量
 
-回り込み報酬は `ApproachRewardWeights`、押す報酬は `PushRewardWeights` を環境の設定へ渡します。
-報酬関数の項そのものを変える場合は、`src/hexapod_transport_rl/rewards.py` の
-`approach_reward_terms()` を編集します。ソースを編集したら新規ランタイムで新しい実験を始めます。
-`PushEnv._reward_terms()` が押す動作の式です。実際に学習へ渡していない別の式をノートブックだけに作らないでください。
+等長3腕のTを2台が脚・足で押し、位置・向き・停止を学びます。歩行モデルだけを固定します。
+標準は0.3〜0.4 m、目標との角度差±5〜30度、制限12秒です。
+最終評価は位置8 cm・角度5度・低速状態1秒を要求します。
+3つの段階を別seedの6試行で検証し、50%以上かつ各段階25ロールアウト以上で進めます。
+難度の変更は次のresetにだけ適用し、途中の物理状態は変えません。
 
-## TorchRLのMAPPO
+学習は65,536チームステップ／条件、2世界並列、horizon 128、ミニバッチ128、4 epochs、学習率3e-4です。
+学習時間は実行時のCSVを確認します。[測定記録](pose-task.md)に実験条件と結果があります。
+256ステップに減らす場合は接続確認だけで、成功する学習とは区別します。
+criticの価値正規化と、探索ノイズ上限を約0.37から0.05へ下げる設定を使います。
+ノイズの変更はPPO更新後・次の収集前に行い、actorが学ぶ行動の平均を変更しません。
+GPUによるMuJoCoの高速化は組み込んでいません。学習中は描画せず、評価時にだけ録画します。
 
-[TorchRLの公式MARLチュートリアル](https://docs.pytorch.org/rl/stable/tutorials/multiagent_ppo.html)と同じく、
-局所観測の共有actorと、チーム全体の観測を使う中央criticを組み合わせます。
-更新にはTorchRL 0.14.0の `MAPPOLoss` と `MultiAgentGAE`、収集には `Collector` を使います。
-行動分布は `TanhNormal`、機体別の確率比をclipします。
+両条件は同じ初期重み・seed・物理・学習量・段階移行の規則を使います。
+角度の補助報酬だけを0にし、角度の成功判定は共通に残します。
+補助報酬の割引率とMAPPOのgammaは0.99に揃えます。
+報酬の違いによって到達段階と経験する配置が変わるため、その違いも記録します。
+総報酬の大小で性能を比較せず、成功率・位置・角度・T端の誤差・接触・時間を使います。
 
-ノートブックには収集・更新ループを直接書いています。独自のPPO損失やGAEの実装は使いません。
-`make_mappo_networks()` と `make_mappo_loss()` はTorchRLのネットワークと損失の設定をまとめます。
-設定は `MAPPOSettings`、勾配更新はPyTorchのAdamです。
-`ReplayBuffer` は現在のロールアウトをミニバッチに分けるためのものです。
-毎回 `buffer.empty()` を呼び、古い方策の経験を次のロールアウトへ持ち越しません。
-機体数を時間や並列世界と一緒にflattenせず、各機の行動・確率比を維持します。
+## ルールとの比較
 
-`TorchRLTransportEnv` は既存のMuJoCo環境を接続するだけです。
-報酬はチームで1つ、観測・行動は機体別の配列です。最終観測と終了フラグを保持し、
-時間切れでは最終観測の価値を使い、成功・転倒では使いません。
-Collectorが終了した世界だけresetし、GAEがエピソード境界を越えないようにします。
+`forward`は前進だけ、`feedback`は位置と角度の誤差から左右の速度を変える比例制御です。
+モデルとルールを同じ未使用seed・最終精度・制限時間で評価します。
+ルールの行動・軌跡・重みは学習に使いません。強化学習がルールより優れるかは評価で判断します。
+ルールのゲインを調整する場合も別の検証seedを使い、テストを残します。
 
-## 動作確認から研究へ
+標準評価は12試行、卒論では50試行以上・少なくとも3つの学習seedで繰り返します。
+モデル選択や設定の調整には開発・検証seedを使い、最終テスト結果からモデルを選び直しません。
+学習量を揃えた最後のモデルを比較し、失敗や転倒も集計します。
 
-標準は32,768チームステップ／条件、評価6試行／配置、制限60秒です。
-近い配置から後方配置へ進む2段階に絞り、目標方向に対するTの角度は±15度、位置のばらつきは±4 cmです。
-後方配置では各機の向きが変わるため、前進・左右移動・旋回を使って整列します。
-その後は共通の学習済み押す方策がTを2 m先の目標へ運びます。
-今回新しく学習するのは整列までの方策で、押す区間と歩行モデルは固定です。
+## 保存
 
-2コアに制限したローカルCPU実測は約3分30秒〜4分／条件でした。
-比較2条件の学習は合計約7〜8分、準備・評価・動画を含め10〜20分程度を目安にします。
-Colab上で実測した時間ではなく、CPU・通信・描画環境によって変わります。
-ノートブックで自分の `elapsed_seconds` と `team_steps_per_second` を確認してください。
-[測定条件と実験結果](training-time.md)を参照してください。
-256ステップに減らす場合はAPIの接続確認のみです。
+`create_experiment()`は実験名の新規フォルダを作り、実行時のコード・資産・モデル・版・SHA256を保存します。
+同じ名前で再実行せず、新しい実験名を付けてください。
+各条件に`run.json`、`initial.pt`、`progress.csv`、`curriculum.json`、途中checkpoint、最後の`pose.pt`が入ります。
+評価JSON・比較CSV・図・動画も同じ結果フォルダへ保存し、最後にZIPを作ります。
 
-学習設定は `HORIZON=128`、`MAPPOSettings(learning_rate=1e-4, minibatch_size=128)`、4 epochsです。
-両条件の初期重みを揃え、進捗報酬6.0と0.0を比較します。成功時の報酬はどちらにも残します。
-成功率を保証する設定ではないので、到達段階・失敗例も記録してください。
-卒論の本実験では新しい実験名にして、50試行／配置・少なくとも3つの学習seedで比較します。
-前方・側方の大きな回り込みを調べる場合は、別実験で4段階へ拡張し、時間を再測定します。
-学習量は `NUM_ENVS * HORIZON` の倍数で指定します。端数は収集単位へ切り上がります。
-並列世界数はColab CPUの能力に合わせて2から調整します。描画は評価時だけ、物理更新は200 Hzです。
-GPUによるMuJoCoシミュレーションの高速化は組み込んでいません。
+`pose.pt`はactor・critic・optimizer・価値正規化の統計・設定・段階・PyTorchの乱数状態を含み、別の押すモデルは必要ありません。
+結果フォルダを移動しても読み込めます。同梱の参考モデルは参考再生専用で、自分の学習には使いません。
+未保存の結果はランタイム削除で失われます。本実験では途中checkpointもDrive等へ保存します。
 
-両条件とも同じ初期化seed・学習量・物理設定・固定歩行モデル・固定押す方策・カリキュラム規則を使います。
-標準の配置は `layouts=("near", "rear")` です。25ロールアウトごとに更新後の方策を別seedで検証し、
-検証成功率75%以上かつ各段階50ロールアウト以上で難度を上げます。
-初期配置の変更は後続のresetに適用し、進行中のエピソードは維持します。検証経験は学習へ渡しません。
-カリキュラムは成功率によって進むため、報酬による到達段階の違いも記録します。
-同じ学習量の最後のモデルを共通の未使用テストseedで比較し、テスト結果からモデルを選び直しません。
-ハイパーパラメータやモデルの選定が必要なら、別の検証seedを使い、最終テストを残してください。
-総報酬は式を変えると尺度が変わるため、条件間の性能比較には使いません。
-少なくとも3つの学習seedで繰り返し、学習によるばらつきも報告します。
-
-## 保存と再開
-
-`create_experiment(PROJECT_DIR, name)` は新規出力先を作り、実行時のソース・資産・モデル・コミットSHA・版を保存します。
-同じ名前を再利用せず、新しい条件には新しい名前を付けます。
-各学習の `run.json` に報酬係数・seed・MAPPO設定・ライブラリの版・カリキュラムの規則を記録します。
-`progress.csv` に収集量・学習速度・TorchRLの損失・到達段階、`curriculum.json` に進捗を保存します。
-ノートブックは25ロールアウトごとに `checkpoints/step_*.pt`、最後に `transport.pt` を保存します。
-
-`.pt` にはactor・critic・optimizer・設定・カリキュラム・PyTorchの乱数状態と、固定押すモデルへの相対パス・ハッシュが入ります。
-結果フォルダ全体を移動しても再生できます。`evaluate_transport()` は新形式と同梱の旧形式を自動判別します。
-新しいネットワークへ旧形式の重みを直接読み込むことはしません。
-`initial.pt` も保存し、同じ配置で学習前・進捗報酬あり・進捗報酬なしの30秒動画を比較します。
-同梱の `lesson_transport.pt` は短時間課題で学習した最後のモデルで、再生専用の参考例です。
-学生の学習は常にランダム初期化し、参考モデルの重みや行動を学習に使いません。
-最後の `archive_results(RUN_DIR)` で結果ZIPを作り、Colabのファイル一覧からダウンロードします。
-未保存の結果はランタイムの削除で失われるため、本学習では途中結果もDrive等へコピーしてください。
-
-再開時は同じ報酬・MAPPO設定を復元し、新しい出力先を使います。
+## 学習を再開する
 
 ```python
 import torch
 from hexapod_transport_rl import (
-    load_mappo, ApproachConfig, TorchRLTransportEnv, MAPPOSettings,
-    make_mappo_loss, ApproachCurriculum,
+    load_mappo, PosePushConfig, PoseStage, PoseCurriculum,
+    TorchRLTransportEnv, MAPPOSettings, make_mappo_loss,
 )
 
-actor, critic, saved = load_mappo("runs/reward_trial_01/baseline/transport.pt")
-config = ApproachConfig(**saved["approach_config"])
+actor, critic, saved = load_mappo("runs/pose_reward_trial_01/baseline/pose.pt")
+config = PosePushConfig(**saved["pose_config"])
 settings = MAPPOSettings(**saved["training"]["settings"])
-loss = make_mappo_loss(actor, critic, settings)
+loss = make_mappo_loss(
+    actor, critic, settings, value_normalizer_state=saved["value_normalizer"],
+)
 optimizer = torch.optim.Adam(loss.parameters(), lr=settings.learning_rate)
 optimizer.load_state_dict(saved["optimizer"])
 envs = TorchRLTransportEnv(config, num_envs=saved["training"]["num_envs"])
 envs.set_seed(saved["training"]["seed"])
-curriculum = ApproachCurriculum(
-    config, envs, actor, "runs/reward_continued",
+curriculum = PoseCurriculum(
+    config, envs, actor, "runs/pose_continued",
     seed=saved["training"]["seed"], settings=settings,
     horizon=saved["training"]["horizon"],
+    stages=tuple(PoseStage(**stage) for stage in saved["training"]["curriculum"]),
     validate_every=saved["training"]["validate_every"],
     minimum_rollouts=saved["training"]["minimum_rollouts"],
-    layouts=saved["training"]["curriculum"], resume=saved,
+    validation_episodes=saved["training"]["validation_episodes"],
+    advance_threshold=saved["training"]["advance_threshold"], resume=saved,
 )
 torch.set_rng_state(saved["torch_rng_state"])
 ```
 
-この準備の後にノートブックと同じCollector・buffer・更新ループを使います。
-Collectorの `total_frames` は追加で学習するチームステップ数です。
-カリキュラムの段階・重み・optimizerは引き継ぎますが、中断時の物理状態やエピソードは復元しません。
-同じseedから現在の段階で新しくresetするため、連続実行と完全に同じ軌跡にはなりません。
-比較条件ごとに再開の方針を揃え、追加学習量を記録してください。
-最後に `curriculum.close()` と `collector.shutdown()` を呼びます。
+この後はノートブックと同じCollector・buffer・更新ループを使います。
+Collectorの`total_frames`は追加で収集する量です。探索ノイズの進捗は、
+再開前の`transitions`も含めた収集量を当初の総予算で割って渡します。
+再開は重み・optimizer・段階を引き継ぎますが、
+中断時の物理状態や進行中のエピソードは復元しません。連続実行と完全に同じ軌跡にはなりません。
+最後に`curriculum.close()`と`collector.shutdown()`を呼びます。
 
-## 押す報酬を研究する場合
+## 拡張
 
-`TorchRLTransportEnv(PushConfig(...))` も同じCollector・MAPPO更新に接続できます。
-
-```python
-from dataclasses import replace
-from hexapod_transport_rl import PushConfig, PushRewardWeights
-
-reward = replace(PushRewardWeights(), body_contact=3.0)
-envs = TorchRLTransportEnv(PushConfig(shape="T", reward_weights=reward), num_envs=2)
-actor, critic = make_mappo_networks(num_robots=envs.num_robots, obs_dim=envs.obs_dim)
-loss = make_mappo_loss(actor, critic, settings)
-```
-
-これは押す学習の準備部分です。以降の収集・更新ループは回り込みと同じです。
-比較する両条件とも同じseedでランダム初期化し、同じ学習量で比較します。
-`save_mappo()` / `load_mappo()` は現在、2台の回り込みモデルと同梱の固定押すモデルの結合を扱います。
-新しい押すモデルを保存する場合は `torch.save()` でactor・critic・optimizer・`PushConfig` を記録し、
-運搬全体へ接続する際には押すモデルの評価アダプターを拡張します。
-回り込みと押す段階の変更を同時に行う前に、それぞれの影響を切り分けます。
-
-## 実験の範囲
-
-このノートブックの回り込み学習は2台、平坦な床、T字物体1つ、他の障害物なし、
-位置・姿勢をシミュレータから取得する条件です。脚・足による押し動作を使い、胴体への押し具は追加しません。
-歩行APIは1〜4台、基本の押す環境は2〜4台で、TorchRLへの接続も2〜4台に対応します。
-同梱運搬モデル・回り込みの配置と観測は2台専用です。
-4台での役割割当・回り込み環境は別に実装し、学習・運搬成功率を評価します。
+`PosePushConfig(num_robots=4)`で機体数を増やせます。Tの3腕は4台用では各1.3 mです。
+ネットワークは`make_mappo_networks(envs.num_robots, envs.obs_dim)`で機体数と観測の形に合わせます。
+2台の保存モデルを4台へそのまま使いません。役割配置・学習・成功率を再検証します。
+摩擦・質量・初期角度・停止精度は1つずつ変更して比較してください。
+現状は平坦な床・障害物なし・シミュレータの状態を観測する条件です。

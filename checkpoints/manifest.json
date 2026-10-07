@@ -21,5 +21,15 @@
     "team_steps": 32768,
     "seed": 20261008,
     "evaluation": "docs/results/short_task_20261007.json"
+  },
+  "pose_transport.pt": {
+    "source": "runs/pose_annealed_20261007/pose.pt",
+    "purpose": "Equal-arm T pose pushing learned from random weights and rewards; frozen gait only; illustration reference, not student initialization",
+    "sha256": "3ce472e0f40ee6700fee1945f4a2285914aea2c694ca713613bdbad2b99c0e9c",
+    "team_steps": 65536,
+    "seed": 20261010,
+    "advance_threshold": 0.75,
+    "evaluation": "docs/results/pose_task_20261007.json",
+    "illustrative_seed": 87004
   }
 }

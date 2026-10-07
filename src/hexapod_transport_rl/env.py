@@ -106,7 +106,7 @@ class PushEnv:
         # Front feet stand 0.258 m ahead along +X. Keep the body behind the box.
         local = np.column_stack(
             (
-                np.full(self.cfg.num_robots, -self.cfg.depth / 2 - self.cfg.push_gap),
+                np.full(self.cfg.num_robots, self.cfg.rear_face - self.cfg.push_gap),
                 self.cfg.slots,
             )
         )
@@ -157,7 +157,7 @@ class PushEnv:
         """Place robots behind their assigned cargo slots, with optional jitter."""
         for i, q in enumerate(self.root_q):
             xy = rotation(cargo_heading) @ np.array(
-                [-self.cfg.depth / 2 - self.cfg.push_gap - 0.10, self.cfg.slots[i]]
+                [self.cfg.rear_face - self.cfg.push_gap - 0.10, self.cfg.slots[i]]
             )
             yaw = cargo_heading
             if randomize:

@@ -73,6 +73,7 @@ class PushConfig:
     shape: str = "box"
     cargo_mass: float = 2.0
     cargo_friction: float = 0.3
+    t_geometry: str = "equal_arms"
     # Goal, episode horizon and control timing.
     goal_distance: float = 2.0
     episode_seconds: float = 40.0
@@ -93,6 +94,8 @@ class PushConfig:
             )
         if not isinstance(self.num_robots, int) or not 2 <= self.num_robots <= 4:
             raise ValueError("num_robots must be an integer between 2 and 4")
+        if self.t_geometry not in ("equal_arms", "legacy"):
+            raise ValueError("t_geometry must be equal_arms or legacy")
         if self.shape not in ("box", "T"):
             raise ValueError("shape must be box or T")
         if (
@@ -131,7 +134,26 @@ class PushConfig:
     @property
     def depth(self) -> float:
         """Cargo extent along its local X axis."""
-        return 0.45 if self.shape == "box" else 0.7
+        if self.shape == "box":
+            return 0.45
+        return 0.7 if self.t_geometry == "legacy" else self.t_arm_length + 0.1
+
+    @property
+    def t_arm_length(self) -> float:
+        """Junction to each of the three T endpoints, in meters."""
+        return self.width / 2
+
+    @property
+    def rear_face(self) -> float:
+        """Rear cargo surface in local X; equal-arm T origin is its junction."""
+        if self.shape == "T" and self.t_geometry == "equal_arms":
+            return -0.1
+        return -self.depth / 2
+
+    @classmethod
+    def from_checkpoint(cls, saved: dict):
+        """Older checkpoints explicitly retain the footprint they learned on."""
+        return cls(**{"t_geometry": "legacy", **saved})
 
     @property
     def cargo_height(self) -> float:

@@ -1,7 +1,7 @@
 # 歩行コマンドと学習環境API
 
 実行手順は [README](../README.md)、内部構造は [コードガイド](code-guide.md) を参照してください。
-歩行・回り込み・押す環境を、[Gymnasium標準のAPI](https://gymnasium.farama.org/api/env/) で操作します。
+歩行・運搬環境を、[Gymnasium標準のAPI](https://gymnasium.farama.org/api/env/) で操作します。
 複数のロボットが同じ世界で接触するため、全機分の行動をまとめて1つの `step()` へ渡します。
 学習用の報酬はチーム全体の1つの値です。
 
@@ -41,12 +41,12 @@ media.show_video(frames, fps=5)
 | 環境ID | 対応台数 | 観測 | 行動 |
 |---|---|---|---|
 | `HexapodWalking-v0` | 1〜4 | `(N, 6)` | `(N, 3)`、物理速度 |
-| `HexapodApproach-v0` | 2 | `(2, 10)` | `(2, 3)`、−1〜1 |
+| `HexapodPosePush-v0` | 2〜4 | `(N,18+4×(N−1))` | `(N,3)`、−1〜1 |
 | `HexapodPush-v0` (`flatten=False`) | 2〜4 | `(N, 16 + 4×(N−1))` | `(N, 3)`、−1〜1 |
 
-回り込みで `flatten=True` にすると観測 `(20,)`・行動 `(6,)` です。
-押す環境は既定が `flatten=True` で、2台なら観測 `(40,)`・行動 `(6,)` です。
-Gymnasiumではチームを1つの意思決定主体として扱います。これは機体別の辞書を返すPettingZooのAPIとは異なります。
+姿勢運搬は機体軸を保ち、`flatten`引数を使いません。
+`HexapodPush-v0`は旧モデル向けの基本環境で、既定は`flatten=True`です。
+Gymnasiumでは全機分の行動をまとめて1つの環境へ渡します。
 
 ## 学習済み歩行モデルへの指令
 
@@ -68,184 +68,100 @@ Gymnasiumではチームを1つの意思決定主体として扱います。こ�
 内部では従来の `WalkingSimulation` と同じ歩行・モーター・接触計算を使います。
 直接の `set_velocity()` / `run_for()` も既存スクリプトとの互換性のため利用できます。
 
-## 押す環境
+## Tの姿勢運搬
 
 ```python
-from hexapod_transport_rl import PushConfig
+from hexapod_transport_rl import PosePushConfig, PoseRewardWeights
 
-env = gym.make("HexapodPush-v0", config=PushConfig(shape="T"), flatten=False)
-obs, info = env.reset(seed=42)
-action = env.action_space.sample()  # 実際の学習ではactorの出力
-next_obs, reward, terminated, truncated, info = env.step(action)
+config = PosePushConfig(reward_weights=PoseRewardWeights(orientation=3.0))
+env = gym.make("HexapodPosePush-v0", config=config, render_mode="rgb_array")
+observation, info = env.reset(seed=42)
+action = np.zeros(env.action_space.shape, dtype=np.float32)
+observation, reward, terminated, truncated, info = env.step(action)
 env.close()
 ```
 
-| 項目 | 2台の場合 |
-|---|---|
-| 観測 | `float32 (2, 20)` |
-| 行動 | `float32 (2, 3)`、各値 `[-1, 1]` |
-| 報酬 | チーム共通のfloat |
-| 中央critic入力 | `env.unwrapped.state()` の `(40,)` |
-| 制御周期 | 1 step = 0.2秒、歩行25 Hz、MuJoCo物理200 Hz |
+Tの原点は2本の中心線の交点です。交点から横棒の左右端・縦棒の先端までの長さは等しく、
+2台用では0.65 mです。太さ0.20 mの箱2つを重複しないよう接続し、面積に比例して質量を分配します。
+目標マーカーは物理物体の形状をコピーした、接触しない表示です。
+`PushConfig(shape="T")`もこの新しい形状を使います。
 
-各機の行動は機体座標の `[前後, 左右, 旋回]` です。
-前進上限0.20 m/s、後退上限0.15 m/s、左右0.10 m/s、旋回0.60 rad/sへ変換します。
-ゼロ指令は停止です。関節は固定した学習済み歩行モデルが制御します。
+標準の目標はT基準で前方0.4 m・横方向±0.08 m、向きは初期Tから±5〜30度です。
+課題全体の向きもランダム化します。各機はTの後方から、位置±0.04 m・向き±0.12 radの揺らぎを加えて開始します。
+`PosePushConfig`に角度・距離・精度・報酬を指定します。学習段階の変更は次のresetでだけ適用します。
 
-コンストラクタの既定は `flatten=True` で、観測 `(40,)`、行動 `(6,)` になります。
-`PushConfig` の既定形状は箱のため、APIを直接使う場合は **`shape="T"` を指定**してください。
-`run.sh` の学習コマンドは2台のT字運搬を選びます。
+成功は0.2秒ごとの判定で、交点の位置誤差8 cm未満、向きの誤差5度未満、Tの速度0.06 m/s未満・角速度0.1 rad/s未満を1秒維持することです。
+制限時間は12秒です。成功閾値は`position_tolerance`・`yaw_tolerance`・`success_hold_seconds`で変更します。
 
-局所観測の添字は以下です。位置ベクトルは観測する機体の座標へ変換します。
+### 観測と行動
 
-| 添字 | 内容 |
-|---|---|
-| `0:2` | 自機→荷物のXY / 3 m |
-| `2:4` | 荷物→目標のXY / 3 m |
-| `4:7` | 自機のXY速度とyaw角速度 |
-| `7:9` | 荷物と自機のyaw差のsin・cos |
-| `9:11` | 目標と自機のyaw差のsin・cos |
-| `11:14` | 直前の速度指令 / `[0.20, 0.10, 0.60]` |
-| `14` | 自機の上向き軸と世界Z軸の内積 |
-| `15` | 担当する押し位置の横座標 / 荷物幅 |
-| `16:20` | 相手の相対XY / 3 mとyaw差のsin・cos |
+各機の観測はTの座標系で作ります。右側の機体はY方向と旋回の符号を反転し、左右の役割でactorを共有します。
 
-## 回り込み環境
+| 番号 | 内容 | 尺度 |
+|---|---|---|
+| 0〜1 | Tに対する自分の位置 | 1 m |
+| 2〜3 | Tに対する自分の向きのsin/cos | sinのみ左右反転 |
+| 4〜6 | 自分の平面速度・角速度 | 歩行指令上限で割る |
+| 7〜9 | 前回の速度指令 | 歩行指令上限で割る |
+| 10〜11 | Tから目標への位置 | 1 m |
+| 12〜13 | Tから目標への角度差のsin/cos | sinのみ左右反転 |
+| 14〜16 | Tの平面速度・角速度 | 歩行指令上限で割る |
+| 17 | 担当位置の横方向距離の絶対値 | Tの横幅で割る |
+| 18以降 | 相手の相対位置2・相対向きのsin/cos | 他機ごとに4成分 |
 
-```python
-from hexapod_transport_rl import ApproachConfig
+行動は各機の`[前後, 左右, 旋回]`、範囲−1〜1です。右側は左右・旋回の符号を反転して実際の機体座標の指令へ戻します。
+`policy_action(actor, observation)`と`rule_action(core, policy)`は、このAPIに渡す行動を返します。
+共有・座標変換は構造上の工夫であり、学習行動をルールで生成するものではありません。
 
-env = gym.make("HexapodApproach-v0", config=ApproachConfig(layout="front"))
-obs, info = env.reset(seed=42)
-next_obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
-env.close()
-```
+`info`には`distance`（m）、`yaw_error`（rad）、`cargo_speed`、`cargo_yaw_speed`、`reward_terms`、
+接触力積・転倒・終了理由が入ります。`footprint_error_m`はTの3つの端と目標の対応する端のRMS位置誤差です。
+位置・角度をまとめた見た目のズレの指標ですが、成功判定は位置と角度を個別に使います。
 
-`reset(options={"layout": "side"})` でそのエピソードだけ初期配置を指定できます。
-`config` は `ApproachConfig` または同じフィールドの辞書を受け取ります。
-診断情報には `state`、実際の機体速度指令 `commands`、`layout`、`is_success`、
-`episode_return`、`termination_reason`、`reward_terms` が入ります。
-
-観測は `(2, 10)`、行動は `(2, 3)` です。
-`observe_approach()` がT基準の位置・向き・自機速度・前回指令を作り、左右の機体を共通の座標へ反転します。
-`physical_actions()` がactorの出力を実際の左右・旋回方向へ戻します。この変換は `ApproachEnv.step()` 内で行います。
-
-回り込みの成功は、2台がT後方の担当位置 `x=-1.05 m, y=±0.325 m` へ近づいて向きを合わせることです。
-回り込み中の成功判定と、Tを目標まで運ぶ成功判定は別です。
-観測の正確な並びと正規化は `approach.py` の `observe_approach()` を参照してください。
-
-## 終了、診断、並列化
-
-`reset(seed=...)` は `(obs, info)`、`step(action)` は `(obs, reward, terminated, truncated, info)` を返します。
-`terminated` は成功・失敗、`truncated` は時間切れです。最終観測を返した後、自動resetはしません。
-押す環境での成功は位置誤差0.18 m未満、yaw誤差0.25 rad未満、速度0.06 m/s未満、yaw速度0.10 rad/s未満を0.5秒以上保つことです。
-
-`info` に成功、目標までの距離、yaw誤差、接触、報酬内訳を返します。
-押す環境の `reward_terms` は距離・向き・押す位置への接近、指令変化、時間、衝突、胴体接触、終了報酬を含みます。
-`body_normal_impulse_ns`、`leg_link_normal_impulse_ns`、`foot_normal_impulse_ns` は各機の部位別の法線力積です。
-
-押す学習の `make_vector_env(B, flatten=False, asynchronous=True)` はB個の独立世界を別プロセスで動かします。
-観測 `(B, 2, 20)`、行動 `(B, 2, 3)`、報酬 `(B,)` になります。
-回り込み学習は `make_approach_vector()` を使い、観測が `(B, 2, 10)` になります。
-終了した世界だけ `reset(options={"reset_mask": terminated | truncated})` でリセットします。
-学生のTorchRL学習は最終観測を保ったままGAEを計算します。旧CLIの同じ処理は `mappo.py` にあります。
-
-別プロセスを使う自作スクリプトでは `if __name__ == "__main__":` で起動処理を囲み、最後に `close()` を呼んでください。
-`HexapodPushEnv(render_mode="rgb_array")` はRGB画像、`render_mode="human"` はGUIを提供します。
-運搬全体の25 fps録画は `./run.sh eval --video-dir ... --episodes 1` を使ってください。
-
-## 報酬の比較実験API
-
-```python
-from dataclasses import replace
-from hexapod_transport_rl import ApproachConfig, ApproachRewardWeights
-
-reward = replace(ApproachRewardWeights(), robot_contact=12.0)
-config = ApproachConfig(layout="front", reward_weights=reward)
-env = gym.make("HexapodApproach-v0", config=config, render_mode="rgb_array")
-observation, info = env.reset(seed=80000)
-observation, reward, terminated, truncated, info = env.step(env.action_space.sample())
-terms = info["reward_terms"]  # 合計がこのstepのチーム報酬
-frame = env.render()
-env.close()
-```
-
-回り込みの観測は `(2, 10)`、行動は `(2, 3)` の−1〜1です。
-担当する左右の役割を反転した座標で行動を出し、内部で実際の機体速度へ戻します。
-中央critic用の `env.unwrapped.state()` は両機の観測を並べた `(20,)` です。
-学生の学習では、同じ設定を `TorchRLTransportEnv(config, num_envs=...)` へ渡します。
-`make_mappo_loss(actor, critic, settings)` はTorchRLの `MAPPOLoss` と `MultiAgentGAE` を設定します。
-`save_mappo()` は回り込みの重み・optimizer・報酬設定・共通の押すモデルへの相対パスとハッシュを保存します。
-旧MAPPOモデルの読み込みは従来の既定値を補います。
-式は `rewards.approach_reward_terms()`、押す報酬は `PushConfig(reward_weights=PushRewardWeights(...))` で設定します。
-
-`evaluate_transport(checkpoint=..., output=..., episodes=..., seed=..., layout=...)` は
-回り込みから押すまでを評価し、物理的な成功・接触・転倒・誤差をJSONに保存して辞書を返します。
-異なる報酬の実験同士を比較するときは、総報酬ではなくこれらの指標を使います。
-
-## TorchRLのMAPPOへの接続
+## TorchRLとモデル保存
 
 ```python
 from hexapod_transport_rl import (
     TorchRLTransportEnv, MAPPOSettings, make_mappo_networks, make_mappo_loss,
 )
 
-envs = TorchRLTransportEnv(config, num_envs=2)
-envs.set_seed(42)
-actor, critic = make_mappo_networks(num_robots=envs.num_robots, obs_dim=envs.obs_dim)
+envs = TorchRLTransportEnv(config=config, num_envs=2)
+actor, critic = make_mappo_networks(envs.num_robots, envs.obs_dim)
 loss = make_mappo_loss(actor, critic, MAPPOSettings())
+envs.close()
 ```
 
-`TorchRLTransportEnv` は物理計算を変更しません。既存のGymnasium並列環境をTorchRLの `EnvBase` に接続します。
-`asynchronous=True` の既定ではspawnワーカー、`False` では同期実行です。物理計算と方策はCPUで動きます。
-`num_envs` は独立した世界の数、`num_robots` は各世界にいる機体数です。
+学習の収集・GAE・更新ループはノートブックにあります。`num_envs`は独立した世界数です。
+actorは局所観測、criticは全機の観測を使います。報酬はチームで共有し、PPOの確率比は機体別です。
+`PoseCurriculum`は検証・reset段階・ログを管理し、学習経験や行動を与えません。
+`save_mappo()`はpose方策の場合、別の押すcheckpointを必要としません。
+価値正規化を使うときは`loss=loss`も渡し、再開用の統計を保存します。
+`anneal_exploration(actor, settings, progress)`はPPO更新後に呼び、次の収集で使う
+探索ノイズの上限を下げます。`progress`は総学習予算に対する収集済みの割合です。
+`load_mappo()`は保存した機体数と観測の形を復元します。旧モデルとの重みの相互変換は行いません。
 
-| TorchRLのキー | 形（B世界、N機、D次元の観測） | 意味 |
-|---|---|---|
-| `("agents", "observation")` | `(B,N,D)` | 各機の局所観測 |
-| `("agents", "action")` | `(B,N,3)` | 各機の正規化速度指令 |
-| `reward` | `(B,1)` | チーム共通の報酬 |
-| `done` / `terminated` / `truncated` | `(B,1)` | 世界ごとの終了フラグ |
-| `success` | `(B,1)` | 物理的な成功の診断 |
-
-TorchRLは名前付きの配列を `TensorDict` に格納します。`Collector` が返す経験には時間軸Tが加わり、
-バッチは `(B,T)`、観測は `(B,T,N,D)` になります。`batch.numel()` はチームステップ数で、機体数は掛けません。
-
-`make_mappo_networks()` はTorchRLの `MultiAgentMLP` を使います。actorは局所観測・共有重み、
-criticは全機の観測・共有重みです。探索幅3成分も共有します。`TanhNormal(event_dims=1)` により
-3成分を1機分の行動として扱い、確率比は機体別に計算します。
-`MAPPOLoss` の `MultiAgentGAE` がチーム報酬・終了を各機へ展開します。
-時間切れではreset前の最終観測の価値を使い、成功・転倒では使いません。GAEはエピソード境界を越えて伝播しません。
-損失・GAE・経験収集・ミニバッチの抽出はTorchRL、勾配更新はPyTorchです。
-
-ノートブックには `Collector` → GAE → 現在の経験を `ReplayBuffer` に格納 → ミニバッチの更新を
-直接書いています。このbufferは毎ロールアウト空にし、過去の経験を再利用する学習にはしません。
-`MAPPOSettings` が学習率・epochs・minibatch・clip幅・損失係数などの共通設定です。
-
-`ApproachCurriculum(config, env, actor, output, seed=..., settings=..., horizon=...)` は配置と記録だけを担当します。
-更新後の `record(batch, metrics)` で50ロールアウトごとに別seedで検証し、
-成功率75%以上・段階内50ロールアウト以上で難度を上げます。
-既定は `near → rear → side → front`、学生の短時間課題は
-`layouts=("near", "rear"), validate_every=25` を指定します。
-変更は後続のresetへ適用され、進行中のエピソードは維持します。検証経験は学習へ渡しません。
-
-## TorchRLの保存モデルでGymnasiumを操作する
+## 未使用seedで評価・録画
 
 ```python
-from hexapod_transport_rl import load_mappo, policy_action
+from hexapod_transport_rl import evaluate_pose
 
-actor, critic, saved = load_mappo("checkpoints/lesson_transport.pt")
-env = gym.make("HexapodApproach-v0", config=ApproachConfig(**saved["approach_config"]))
-observation, info = env.reset(seed=80000)
-action = policy_action(actor, observation)  # (2,3)、評価用のtanh(loc)
-observation, reward, terminated, truncated, info = env.step(action)
-env.close()
+report = evaluate_pose(
+    "runs/pose_reward_trial_01/baseline/pose.pt",
+    episodes=20, seed=84000, workers=2, output="runs/evaluation.json",
+)
+rule_report = evaluate_pose(
+    config=config, policy="feedback", episodes=20, seed=84000, workers=2,
+    output="runs/feedback.json",
+)
 ```
 
-`policy_action()` はTorchRLのactorから決定的な行動を取り出すだけで、回り込みのルールを追加しません。
-`save_mappo(path, actor, critic, optimizer, config=..., pushing_checkpoint=..., provenance=..., training=..., curriculum=...)`
-が運搬再生用の `.pt` を保存します。固定押すモデルを相対パスで記録するため、結果フォルダ全体を移動できます。
-`evaluate_transport(checkpoint=..., ...)` は新形式と同梱の旧形式を判別し、同じ物理条件で運搬を評価します。
-旧形式の重みを新しいTorchRLネットワークへ直接読み込むことはしません。
-学習が終了したら `curriculum.close()` と `collector.shutdown()` を呼びます。
-Collectorが環境も閉じるため、別途 `envs.close()` を重ねて呼ぶ必要はありません。
+`policy="forward"`は前進だけ、`"feedback"`は比例制御です。ルールは評価専用で学習の教師には使いません。
+モデルの標準評価は、学習中の到達段階によらず保存された最終設定を使います。
+比較するときは`config=baseline_config`を全条件へ指定して物理・成功判定を揃えます。
+録画は`video_dir`を指定し、mediapyで5 fpsのMP4を保存します。録画時は逐次評価します。
+位置・角度・T端の誤差、成功数・接触・転倒を返します。全試行の結果を含め、成功例だけを選んで集計しません。
+
+## 旧モデルの再生
+
+`HexapodApproach-v0`と`evaluate_transport()`は以前の形状で学習した参考モデル用です。
+古いcheckpointに形状設定がない場合、読み込み側が`legacy`形状を明示して再生します。
+新しい等長Tの性能と旧実験の成功率を混同しないでください。

@@ -1,138 +1,47 @@
 # コードを読む順番
 
-歩行コマンドの使い方は [APIガイド](api.md) を参照してください。`walking_env.py` がGymnasium形式の学生向け操作、`walking.py` が共通の歩行シミュレーション、
-`locomotion.py` が歩行と運搬で共通の固定モデル・モーター制御です。
+学生の学習は普通のPythonセルからTorchRLを呼び出します。
+まず歩行APIを試し、運搬の観測・行動・報酬を理解してから収集・更新ループを読んでください。
 
-学生の学習はTorchRLのMAPPOを使います。
-環境・報酬を読んだ後、TorchRLへの接続、ネットワーク、配置カリキュラムを確認してください。
-
-| 順番 | ファイル | 読む内容 |
+| 順番 | ファイル | 内容 |
 |---|---|---|
-| 1 | `approach.py` | 回り込みのGymnasium API、観測・行動・整列条件 |
-| 2 | `rewards.py` | 報酬係数と実際に使う式 |
-| 3 | `torchrl_env.py` | Gymnasiumの物理世界をTorchRLのTensorDictへ接続 |
-| 4 | `torchrl_mappo.py` | 共有actor・中央critic、MAPPOLossの設定、モデル保存 |
-| 5 | `torchrl_training.py` | 検証、初期配置の難度変更、学習ログ |
-| 6 | `approach_evaluation.py` | 回り込みから固定押す方策への切り替え、評価・動画 |
-| 7 | `env.py` | 固定歩行モデル、接触計測と物理シミュレーション |
+| 1 | `walking_env.py` | 学習済み歩行モデルへの速度指令、Gymnasium API |
+| 2 | `pose_push.py` | Tの目標姿勢・観測・行動の反転・報酬・運搬Gym API |
+| 3 | `rewards.py` | `PoseRewardWeights`の変更可能な係数 |
+| 4 | `torchrl_env.py` | Gymの物理環境をTorchRLのTensorDictへ接続 |
+| 5 | `torchrl_mappo.py` | TorchRLのactor・critic・MAPPOLoss・探索量・保存・読み込み |
+| 6 | `pose_training.py` | 学習とは別の検証、resetの難度変更、CSV記録 |
+| 7 | `pose_evaluation.py` | 最終精度での評価、比較用ルール、MP4録画 |
 
-`torchrl_mappo.py` はライブラリのネットワーク・MAPPOLoss・GAEを設定し、保存と推論を扱います。
-独自のPPO損失やGAEは実装しません。収集・更新ループはノートブックから直接読み、PyTorchのoptimizerを使います。
-`mappo.py` と `approach_training.py` は以前のMAPPOモデルの読み込み・再学習用です。
-学生の新しい比較学習はこれらの更新ループを使いません。
+収集・GAE・ミニバッチ更新・集計・図・動画表示はノートブックにあります。
+`PoseCurriculum`は行動や教師データを作らず、PPO更新も行いません。
+`tools/colab_runtime.py`はインストールと描画準備、`experiments.py`は実験コードのコピーとZIP保存だけを担当します。
+教材を変更するときは`tools/build_colab.py`を編集し、`uv run python tools/build_colab.py`で再生成します。
 
 ## 研究で変更する場所
 
-| 変更したい内容 | 最初に見る定義 |
+| 変更 | 定義 |
 |---|---|
-| 回り込みの報酬 | `rewards.py` の `ApproachRewardWeights` と `approach_reward_terms()` |
-| 押す動作の報酬 | `rewards.py` の `PushRewardWeights` と `env.py` の `_reward_terms()` |
-| 初期配置 | `approach.py` の `ApproachConfig` と `_sample_start_pose()` |
-| 回り込みから押す動作へ移る条件 | `approach.py` の `HANDOVER_*` と `approach_ready()` |
-| 学習率・PPOのclip幅・各損失の係数 | `torchrl_mappo.py` の `MAPPOSettings` |
-| 初期配置の段階・難度を上げる条件 | `torchrl_training.py` の `ApproachCurriculum` |
+| 報酬係数 | `PoseRewardWeights`とノートブックの`replace()` |
+| 報酬の式 | `PosePhysics._reward_terms()` |
+| 初期角度・距離・精度 | `PosePushConfig`・`POSE_STAGES` |
+| 観測と左右の座標変換 | `observe_pose()`・`PosePushEnv.step()` |
+| 学習率・更新回数・PPO clip | `MAPPOSettings` |
+| 検証と段階移行 | `PoseCurriculum` |
+| 比較する比例制御 | `rule_action()`、評価専用 |
+| Tの等長形状と質量配分 | `model.py`の`_add_cargo()` |
 
-既定値は従来の成功した学習と同じです。係数は各環境の設定に渡し、保存モデルにも記録します。
-学生の短時間課題は2段階・32,768ステップ・学習率1e-4・minibatch 128をノートブックで指定します。
-測定結果とモデルの出典は [実験記録](training-time.md) を参照してください。
-関数の式を編集した場合は新しいランタイム・新しい実験名で学習します。
-旧MAPPOの保存モデルは従来の形式で読み込みます。新しいTorchRLモデルも `.pt` に保存しますが、
-形式名を分け、actor・critic・optimizer・報酬・カリキュラムを記録します。重みは相互互換ではありません。
+ノートブックの標準は2台・65,536チームステップ／条件です。
+同じ初期重みと学習量で角度の補助報酬の有無を比較します。
+物理の外力やデモの行動は与えません。精度に達するまでの学習時間も評価項目です。
 
-## 学生の比較実験
+## 共通の物理基盤
 
-学生用ノートブックは、環境操作・報酬設定・TorchRLの経験収集とMAPPO更新・`evaluate_transport()` を
-通常のPythonコードで直接呼び出します。報酬は `ApproachConfig(reward_weights=...)` へ渡します。
-`ApproachEnv.step()` は `rewards.py` の関数を使い、返した報酬と同じ内訳を `info["reward_terms"]` に格納します。
+`PosePhysics`は既存の`PushEnv`と同じ関節・接触・歩行モデルを使い、reset・観測・報酬だけを変更します。
+`env.py`は物理の更新・接触計測・終了判定、`model.py`は機体の複製・床・T・目標を作ります。
+`locomotion.py`は固定歩行モデルとモーター、`contacts.py`は胴体・脚リンク・足の接触力積を扱います。
+ロボット・歩行の資産は`assets`に同梱しています。
 
-`tools/colab_runtime.py` はアクティブなカーネルへのインストールと描画設定だけを担当します。
-`experiments.py` の2関数は実験ソース・資産・版の保存とZIP作成だけを担当します。
-学習・集計・図・mediapy動画表示はノートブックのセルに残しています。
-手順や説明を変えるときは `tools/build_colab.py` を編集し、
-`uv run python tools/build_colab.py` で再生成してください。
-
-## 以前のMAPPOの実行の流れ
-
-```text
-cli.py                    コマンドの入口（./run.sh）
-  ├─ train                approach_training.py → approach.py
-  ├─ train-handover       handover_training.py → api.py → env.py
-  ├─ train-push           mappo.py → vector.py → api.py → env.py
-  ├─ compose             handover_training.py：2つの保存モデルを結合
-  └─ eval                approach_evaluation.py → env.py
-
-各学習 → mappo.py：経験収集、GAE、PPO更新
-各環境 → env.py：固定歩行モデル → MuJoCo → 接触計測 → 観測・報酬
-```
-
-`handover_training.py` は押す方策を追加学習する際の初期配置を定義します。
-75%は回り込み完了位置付近、25%は元の押す学習と同じ配置です。
-回り込み動作を毎回シミュレーションせず、引き継ぎ位置からの経験を集めます。
-
-残りは共通の基盤です。
-
-| ファイル | 役割 |
-|---|---|
-| `config.py` | 物理設定、座標変換、歩行指令の範囲 |
-| `walking_env.py` | Gymnasiumの歩行環境、spaces・終了・RGB描画 |
-| `walking.py` | 1〜4台への速度指令、同時実行、配置、録画 |
-| `locomotion.py` | 固定歩行モデルの検証と推論、25 Hz／200 Hzの共通制御 |
-| `model.py` | 元のロボットXMLを複製し、歩行用の床、または運搬用のT・目標を配置 |
-| `motor.py` | 固定歩行モデルに合わせた電圧・トルク計算 |
-| `contacts.py` | 胴体・脚リンク・足の接触と力積を集計 |
-| `api.py` | Gymnasiumの `reset` / `step` / `render` インターフェース |
-| `vector.py` | 押す学習用の同期・別プロセスによる複数世界の実行 |
-| `types.py`、`__init__.py` | 共通型と公開API |
-
-## 以前のMAPPOの学習アルゴリズム
-
-回り込みと押す動作は、それぞれ独立したMAPPOモデルです。各モデル内では2台がactorを共有し、
-中央criticが同じ世界の2台の観測をまとめて入力します。チーム報酬とadvantageも共有します。
-actorとcriticは128ユニット×2層のMLP、行動は正規分布からサンプリングしてtanhで範囲を制限します。
-
-`collect_rollout()` が経験を集め、`compute_gae()` がadvantageを計算し、`update_policy()` がPPO更新をします。
-時間切れ時はreset前の最終観測から価値を計算します。GAEの伝播は終了・時間切れの両方で切ります。
-
-旧 `train_approach()` 内のコメント1〜5が、初期化、環境準備、収集・更新、検証・難度変更、保存に対応します。
-重みとoptimizerの準備は `_initialize_navigator()`、検証用の1エピソードは `validate()` が担当します。
-評価側は `run_batch()` が録画リソースを扱い、`_run_episode()` が物理更新と結果集計を担当します。
-録画時は物理更新後にコールバックで画像を取得します。
-
-回り込みは `near → rear → side → front` の順で初期配置を難しくします。
-報酬にはTを避けて後方へ向かう距離の減少を使います。この距離は**報酬の計算用**です。
-動作の教師値や決定的な経路指令には使いません。
-
-回り込みの観測は左右の役割に応じて座標を反転します。選定済みの押すactorは左右対称化したMLPです。
-いずれもネットワークの入力・構造の工夫であり、行動そのものは報酬から学習しています。
-
-評価時は `LearnedTransport` が学習済み回り込みactorを実行し、両機の位置と向きが整列条件を
-2ステップ連続で満たすと、押すactorへ一度だけ切り替えます。速度指令を作るルール制御はありません。
-
-基礎の押す環境は2〜4台を扱えますが、今回の回り込み環境・保存モデルは2台専用です。
-
-## 初期の押す方策から研究したい場合
-
-初期の押す方策から研究する場合は `checkpoints/base_pusher.pt` を使います。
-学生の回り込み報酬の比較では、適応済み `pusher.pt` を両条件で固定します。
-初期の押す方策も新たに学習するときだけ `train-push` を使います。
-
-```bash
-# ランダムな上位方策から、後方にいる2台でTを押す
-./run.sh train-push \
-  --num-envs 8 --horizon 64 --iterations 1000 --output runs/push_initial
-
-# 左右対称化と探索幅の調整を適用して追加学習
-./run.sh train-push \
-  --resume runs/push_initial/checkpoint.pt \
-  --num-envs 8 --horizon 128 --epochs 8 --minibatch 256 \
-  --mirror-equivariant --initial-log-std -1.5 --seed 20261007 \
-  --iterations 500 --output runs/push_refined
-```
-
-新しい押すモデルを使う場合は、READMEの回り込み学習・引き継ぎ適応の初期checkpointを置き換えます。
-このコマンド例の反復数で同じ成功率が得られる保証はありません。
-保存済みの初期モデルは、以前の段階的な追加学習と検証による選定の結果です。
-出典は `checkpoints/manifest.json`、元の設定と学習ログは `runs/` に保存しています。
-
-`PushConfig` のフィールドや観測順、モデル形式を変更すると保存モデルとの互換性に影響します。
-学生が報酬や初期配置を変える実験では、元のcheckpointを上書きせず新しい `runs/` の出力先を使ってください。
+`approach.py`・`approach_training.py`・`handover_training.py`・`mappo.py`は旧形状で学習した歴史的なモデルの再生・再学習用です。
+新しい姿勢運搬の学習ループはこれらを使いません。
+旧モデルの検証を残し、新しい形状へ置き換えた結果として誤って再生しないようにします。
