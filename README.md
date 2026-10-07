@@ -8,13 +8,9 @@
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_colab.ipynb)
 
-教材は [プライベートGitHubリポジトリ](https://github.com/hashimoto-robotics-lab/hexapod-transport-rl) で共有します。
-学生はGitHubの招待を承諾してから、上の「Open in Colab」で [教材ノートブック](notebooks/hexapod_transport_rl_colab.ipynb) を開いてください。
-Colabでプライベートリポジトリの読み取りを許可する操作は [Colabガイド](docs/colab-guide.md) にあります。
-
-ノートブックには実行手順を置き、コード・ロボット形状・学習済みモデルはリポジトリ側で管理します。
-Step 1で自分のGitHubアクセストークンを非表示の入力欄へ入力し、教材を取得します。
-トークンをノートブックのコードやGitのURLに書き込む必要はありません。
+上の「Open in Colab」を開き、Googleアカウントでログインして、上から順に実行してください。
+**GitHubアカウント・招待・アクセストークンは不要**です。
+コード・ロボット形状・学習済みモデルは、Step 1で公開リポジトリから自動取得します。
 
 上から順に、準備、API確認、成功モデルの再生、学習、検証用モデル選定、独立したテスト、
 学習曲線・評価表、動画、結果ZIPの保存を実行します。CPUランタイムを使用できます。
@@ -32,7 +28,8 @@ Step 1で自分のGitHubアクセストークンを非表示の入力欄へ入�
 Python 3.12とuvを使用します。ロボットと歩行モデルはパッケージ内に同梱しており、他プロジェクトを参照しません。
 
 ```bash
-cd hexapod_transport_rl
+git clone https://github.com/hashimoto-robotics-lab/hexapod-transport-rl.git
+cd hexapod-transport-rl
 uv sync --locked
 ./run.sh --help
 
@@ -96,6 +93,4 @@ uv run python tools/build_colab.py
 
 実行手順を変更した場合は最後のコマンドでノートブックを再生成してください。
 ソース・資産・モデルの変更はリポジトリにcommitして共有します。学生は取得時のコミットSHAを実験結果に記録できます。
-`runs/`、仮想環境、認証の一時ファイルはGitで共有しません。
-ノートブックの読み込みとランタイム内の教材取得は別の認証です。
-[Colab公式のGitHub連携教材](https://github.com/googlecolab/colabtools/blob/main/notebooks/colab-github-demo.ipynb)
+`runs/` と仮想環境はGitで共有しません。

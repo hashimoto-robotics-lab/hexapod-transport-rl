@@ -7,49 +7,29 @@
 
 ## GitHubからColabで開く
 
-1. 教員から届いたGitHubのリポジトリ招待を承諾する。
-2. [ColabのGitHub画面](https://colab.research.google.com/github) を開き、「Include Private Repos」を選んでGitHubにログインする。
-3. 共有リポジトリの `notebooks/hexapod_transport_rl_colab.ipynb` を選ぶ。READMEの「Open in Colab」からも開ける。
-4. CPUランタイムを使い、Step 1を実行して教材を取得する。
+1. READMEの [Open in Colab](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_colab.ipynb) を開く。
+2. Googleアカウントでログインし、CPUランタイムを使う。
+3. 上から順に実行する。Step 1でコード・形状・モデルを自動取得する。
 
-ノートブックをダウンロードしてColabにアップロードする方法でも構いません。
-その場合も実行時にはプライベートリポジトリの読み取り権限が必要です。
-ノートブックを開くためのGitHub連携と、ランタイムで教材を取得する認証は別の操作です。
-[Colab公式のGitHub連携教材](https://github.com/googlecolab/colabtools/blob/main/notebooks/colab-github-demo.ipynb)
+**GitHubへのログイン、リポジトリへの招待、アクセストークンは不要**です。
+同じランタイムでStep 1を再実行すると、取得済みの教材を使い、学生の編集や学習結果を上書きしません。
+取得に失敗した場合も、途中の取得先を残さず再試行できます。
 
-## GitHubの認証
+## 教材の版と共有
 
-Step 1を実行すると、GitHubアクセストークンの非表示入力欄が出ます。
-学生は自分のアカウントで発行したトークンを使います。教員のトークンは共有しません。
-
-対象を選べる場合はfine-grained tokenで共有リポジトリのみを選択し、`Contents: Read-only` を設定します。
-個人リポジトリへ招待された学生など、fine-grained tokenで共有先を選べない場合は、classic tokenの `repo` scopeを使用します。
-OrganizationのポリシーやSSOがある場合は、その設定に合わせて承認・認証を行ってください。
-[GitHub公式のトークン設定と制限](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
-
-取得処理はトークンを一時的なGitプロセスの環境にだけ渡します。
-ノートブックのセル、リポジトリURL、Gitの設定ファイル、実験JSONには保存しません。
-同じランタイムでStep 1を再実行する際は取得済みの教材を使い、ソースの編集や学習結果を上書きしません。
-認証や取得に失敗した場合も、途中の取得先を残さず再試行できます。
-
-## 教員が管理するファイル
-
-このプロジェクトのフォルダをリポジトリのルートにします。
-`src/`、`checkpoints/`、`notebooks/`、`docs/`、`tests/`、`tools/`、`README.md`、`pyproject.toml`、`uv.lock`、`run.sh`、`.gitignore` を共有します。
-`runs/` と `.venv/` は `.gitignore` で除外しています。認証トークンを登録する必要はありません。
-学生への招待はリポジトリのSettingsで行います。
+教材はこのリポジトリのルートで管理します。教員が変更したコードとノートブックをcommitして共有してください。
+`runs/` と `.venv/` はGitで共有しません。
 
 `GIT_REF` の既定は `main` です。論文の再現用にはタグ名またはコミットSHAを指定してください。
 `experiment.json` に取得したコミットSHAと実行時のソース・資産のハッシュを記録します。
 コードを編集した場合は、別の実験名で学習してください。
 別の版を取得する際は、新しいランタイムでStep 1から始めます。
-既存リポジトリのサブフォルダとして共有する場合だけ、`PROJECT_SUBDIR` を変更します。
 
 ## 上から順に実行する
 
 | 手順 | 学生が確認すること | 生成物 |
 |---|---|---|
-| 1. GitHubから取得 | 自分の権限でコード・形状・モデルを取得する | プロジェクトとコミットSHA |
+| 1. GitHubから取得 | 公開されたコード・形状・モデルを取得する | プロジェクトとコミットSHA |
 | 2. ライブラリ準備 | Python 3.12、MuJoCo、CPU版PyTorch | 隔離した実行環境 |
 | 3. 実験設定 | quick/research、乱数seed、独立世界数 | `experiment.json` |
 | 4. API確認 | 観測、行動、チーム報酬、終了条件 | 入出力の表示 |

@@ -1,4 +1,4 @@
-"""Validate readable notebook cells and the private-repository bootstrap."""
+"""Validate readable notebook cells and the public-repository bootstrap."""
 
 import ast
 import subprocess
@@ -9,10 +9,6 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK = ROOT / "notebooks/hexapod_transport_rl_colab.ipynb"
-pytestmark = pytest.mark.skipif(
-    not NOTEBOOK.exists(),
-    reason="Colab distributes the notebook separately from its extracted files",
-)
 
 
 def test_notebook_and_nested_worker_scripts_compile():
@@ -49,6 +45,9 @@ def test_notebook_fetches_configured_repository_without_binary_payload():
     assert "RESOURCE_ARCHIVE" not in source
     assert "BUNDLE_SHA256" not in source
     assert "base64" not in source
+    assert "getpass" not in source
+    assert "HEXAPOD_GIT_TOKEN" not in source
+    assert "PROJECT_SUBDIR" not in source
     assert NOTEBOOK.stat().st_size < 100_000
     assert (ROOT / "tools/colab_checkout.py").read_text().strip() in source
 
@@ -93,34 +92,15 @@ def local_repository(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("use_commit", [False, True])
-def test_checkout_records_commit_keeps_edits_and_does_not_store_token(
+def test_public_checkout_records_commit_and_preserves_student_edits(
     tmp_path, monkeypatch, local_repository, use_commit
 ):
     namespace = bootstrap_namespace()
-    fake_token = "private-test-value-never-write"
-    monkeypatch.setattr(namespace["getpass"], "getpass", lambda prompt: fake_token)
-    original_run = subprocess.run
-    askpass_paths = []
-
-    def observe_fetch(arguments, **kwargs):
-        if "fetch" in arguments:
-            env = kwargs["env"]
-            assert env["HEXAPOD_GIT_TOKEN"] == fake_token
-            assert fake_token not in " ".join(arguments)
-            askpass = Path(env["GIT_ASKPASS"])
-            assert fake_token not in askpass.read_text()
-            password = original_run(
-                [str(askpass), "Password"],
-                env=env,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            assert password.stdout.strip() == fake_token
-            askpass_paths.append(askpass)
-        return original_run(arguments, **kwargs)
-
-    monkeypatch.setattr(subprocess, "run", observe_fetch)
+    # Even with an inherited prompt, public checkout must run unattended.
+    askpass = tmp_path / "unexpected-prompt.sh"
+    askpass.write_text("#!/bin/sh\nexit 1\n")
+    askpass.chmod(0o700)
+    monkeypatch.setenv("GIT_ASKPASS", str(askpass))
     _, expected_commit = local_repository
     ref = expected_commit if use_commit else "main"
     destination = tmp_path / "student"
@@ -129,17 +109,7 @@ def test_checkout_records_commit_keeps_edits_and_does_not_store_token(
     )
     assert project == destination
     assert commit == expected_commit
-    assert askpass_paths and all(not path.exists() for path in askpass_paths)
-    assert "HEXAPOD_GIT_TOKEN" not in namespace["os"].environ
-    for path in destination.rglob("*"):
-        if path.is_file():
-            assert fake_token.encode() not in path.read_bytes()
     (project / "pyproject.toml").write_text("student edits\n")
-    monkeypatch.setattr(
-        namespace["getpass"],
-        "getpass",
-        lambda prompt: pytest.fail("Repeated checkout must not request a token"),
-    )
     reused, second_commit = namespace["checkout_repository"](
         "classroom/transport", ref, destination
     )
@@ -151,41 +121,31 @@ def test_checkout_records_commit_keeps_edits_and_does_not_store_token(
         )
 
 
-def test_failed_fetch_leaves_no_partial_checkout_or_credentials(tmp_path, monkeypatch):
+def test_failed_fetch_leaves_no_partial_checkout(tmp_path, monkeypatch):
     namespace = bootstrap_namespace()
-    monkeypatch.setattr(namespace["getpass"], "getpass", lambda prompt: "fake-password")
     original_run = subprocess.run
 
     def reject_fetch(arguments, **kwargs):
         if "fetch" in arguments:
-            raise subprocess.CalledProcessError(128, arguments, stderr="fake-password")
+            raise subprocess.CalledProcessError(128, arguments, stderr="unknown ref")
         return original_run(arguments, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", reject_fetch)
-    with pytest.raises(RuntimeError, match="教材を取得できません") as error:
+    with pytest.raises(RuntimeError, match="教材を取得できません"):
         namespace["checkout_repository"](
             "classroom/transport", "main", tmp_path / "student"
         )
-    assert "fake-password" not in str(error.value)
     assert not list(tmp_path.iterdir())
 
 
 @pytest.mark.parametrize(
-    "repository,ref,subdir",
+    "repository,ref",
     [
-        ("https://example.org/classroom/transport", "main", ""),
-        ("classroom/transport", "--upload-pack=anything", ""),
-        ("classroom/transport", "main", "../outside"),
+        ("https://example.org/classroom/transport", "main"),
+        ("classroom/transport", "--upload-pack=anything"),
     ],
 )
-def test_invalid_checkout_input_is_rejected_before_authentication(
-    tmp_path, monkeypatch, repository, ref, subdir
-):
+def test_invalid_checkout_input_is_rejected(tmp_path, repository, ref):
     namespace = bootstrap_namespace()
-    monkeypatch.setattr(
-        namespace["getpass"],
-        "getpass",
-        lambda prompt: pytest.fail("Invalid input must not request a token"),
-    )
     with pytest.raises(ValueError):
-        namespace["checkout_repository"](repository, ref, tmp_path / "student", subdir)
+        namespace["checkout_repository"](repository, ref, tmp_path / "student")

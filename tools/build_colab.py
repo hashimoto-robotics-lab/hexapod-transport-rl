@@ -1,4 +1,4 @@
-"""Build the Colab lesson that fetches its teaching code from private GitHub."""
+"""Build the Colab lesson that fetches its teaching code from public GitHub."""
 
 import json
 import textwrap
@@ -48,9 +48,8 @@ def main():
     markdown("""
     ## Step 1 — GitHubから教材を取得する
 
-    教員から共有されたプライベートリポジトリを取得します。先にGitHubの招待を承諾してください。
-    認証には**自分のGitHubアクセストークン**を使い、実行後の非表示入力欄へ入力します。
-    トークンをコードに書く必要はありません。[認証の手順](https://github.com/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/docs/colab-guide.md#githubの認証)
+    公開リポジトリからコード・ロボット形状・学習済みモデルを取得します。
+    **GitHubへのログインやアクセストークンは不要**です。
 
     `GIT_REF` は通常 `main` のままで構いません。卒論の再現実験ではタグ名・コミットSHAを指定できます。
     """)
@@ -59,10 +58,10 @@ def main():
         "#@title 教材の取得\n"
         f'REPOSITORY = "{REPOSITORY}"\n'
         'GIT_REF = "main" #@param {type:"string"}\n'
-        'PROJECT_SUBDIR = ""\n\n'
+        "\n"
         + bootstrap
         + '\nCHECKOUT_DIR = Path(os.environ.get("HEXAPOD_WORKSPACE_ROOT", "/content/hexapod_transport_rl"))\n'
-        + "PROJECT_DIR, REPOSITORY_COMMIT = checkout_repository(REPOSITORY, GIT_REF, CHECKOUT_DIR, PROJECT_SUBDIR)\n"
+        + "PROJECT_DIR, REPOSITORY_COMMIT = checkout_repository(REPOSITORY, GIT_REF, CHECKOUT_DIR)\n"
         + 'print("教材:", PROJECT_DIR)\nprint("使用するコミット:", REPOSITORY_COMMIT)\n',
         form=True,
     )
@@ -180,7 +179,7 @@ def main():
                     horizon=HORIZON, planned_iterations=iterations,
                     evaluation_episodes=EVAL_EPISODES, evaluation_seconds=EVAL_SECONDS,
                     repository=REPOSITORY, repository_commit=REPOSITORY_COMMIT,
-                    repository_ref=GIT_REF, project_subdir=PROJECT_SUBDIR,
+                    repository_ref=GIT_REF,
                     source_sha256={str(path.relative_to(PROJECT_DIR)): hashlib.sha256(path.read_bytes()).hexdigest()
                                    for path in sorted((PROJECT_DIR / "src").rglob("*"))
                                    if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"})
