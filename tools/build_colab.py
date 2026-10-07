@@ -144,43 +144,102 @@ def main():
         raise RuntimeError("OSMesaが見つかりません。Step 2のインストール結果を確認してください。")
     subprocess.run([str(PYTHON), "-c", "import sys, mujoco, torch; print(sys.version); print('MuJoCo', mujoco.__version__, 'PyTorch', torch.__version__)"], env=PROCESS_ENV, check=True)
     print("CPU実行環境と描画環境を準備しました。")
+
+    def run_example(source, *, output_dir):
+        # Run student API calls using the isolated simulation Python.
+        output_dir.mkdir(parents=True, exist_ok=True)
+        script = output_dir / "example.py"
+        script.write_text(source)
+        subprocess.run([str(PYTHON), str(script)], cwd=output_dir, env=PROCESS_ENV, check=True)
     """,
         form=True,
     )
     markdown("""
     ## Step 3 — 学習済みロボットにコマンドを送る
 
-    ここでは**新しい学習をせず**、固定した歩行モデルを使って1台の歩行を観察します。
-    `velocity` は機体座標の `[前後速度, 左右速度, 旋回速度]`、`seconds` は指令を続ける時間です。
-    正の値は前進・左移動・左旋回、ゼロ3つは停止を意味します。
-    指令は目標速度なので、接触や姿勢によって実際の移動速度には差が出ます。
+    `WalkingSimulation` は、**床と指定した台数のロボットだけ**を用意する歩行用APIです。
+    新しい学習は行いません。まず1台にコマンドを送り、歩行を動画で確かめます。
 
-    | コマンド | 単位 | 指定できる範囲 | このセルで試す値 |
+    - `set_velocity(robot_id=0, vx=0.12)`：0番のロボットの前進指令を0.12 m/sにする。
+    - `run_for(seconds=3.0)`：全機を、現在の指令で同時に3秒間動かす。
+    - `stop()`：全機にゼロ速度を指令する。実際の減速を観察するには、その後も時間を進める。
+
+    指令は、次に変更するまで続きます。`set_velocity()` で省略した速度成分はゼロになります。
+    `robot_id` は0から始まります。`vx`・`vy` は機体座標の速度、`yaw_rate` は旋回速度です。
+    指令は目標速度なので、実際の動きには姿勢や接触による差が出ます。
+
+    | 引数 | 単位 | 指定できる範囲 | 正の値の意味 |
     |---|---|---|---|
-    | 前後速度 `vx` | m/s | −0.15〜0.20 | 前進0.12 |
-    | 左右速度 `vy` | m/s | −0.10〜0.10 | 左移動0.06 |
-    | 旋回速度 `yaw_rate` | rad/s | −0.60〜0.60 | 左旋回0.40 |
+    | `vx` | m/s | −0.15〜0.20 | 前進 |
+    | `vy` | m/s | −0.10〜0.10 | 左移動 |
+    | `yaw_rate` | rad/s | −0.60〜0.60 | 左旋回 |
 
-    まず **停止 → 前進 → 左移動 → 左旋回 → 停止** を再生します。
-    次に下の `velocity` の値を1つ変えて再実行し、動きがどう変わるか確かめてください。
-    `seconds` は0.2秒刻み、各指令は10秒以内で指定します。動画に文字は重ねず、指令と実測位置はセルの出力に記録します。
+    下のAPI呼び出しを1つ変えて再実行し、動きの違いを確かめてください。
+    `with` は最後に動画の保存と後片付けを行います。
+    `run_example()` はセル内のPythonコードをStep 2の専用環境で実行するための補助関数です。
+    `run_for()` の時間は、歩行制御周期の0.04秒刻みで指定します。
     """)
-    code(r"""
-    # このリストが、学習済み歩行モデルへ送る速度コマンドです。
-    WALK_COMMANDS = [
-        {"label": "停止",   "seconds": 0.8, "velocity": [0.00, 0.00, 0.00]},
-        {"label": "前進",   "seconds": 3.0, "velocity": [0.12, 0.00, 0.00]},
-        {"label": "左移動", "seconds": 2.4, "velocity": [0.00, 0.06, 0.00]},
-        {"label": "左旋回", "seconds": 2.4, "velocity": [0.00, 0.00, 0.40]},
-        {"label": "停止",   "seconds": 0.8, "velocity": [0.00, 0.00, 0.00]},
-    ]
-    WALKING_DIR = PROJECT_DIR / "runs/walking_commands"
-    subprocess.run([str(PYTHON), "tools/walking_demo.py",
-                    "--commands", json.dumps(WALK_COMMANDS, ensure_ascii=False),
-                    "--output", str(WALKING_DIR)],
-                   cwd=PROJECT_DIR, env=PROCESS_ENV, check=True)
-    display(Video(str(WALKING_DIR / "walking_commands.mp4"), embed=True))
+    code(
+        r"""
+WALKING_DIR = PROJECT_DIR / "runs/walking_commands"
+run_example(r"""
+        + "'''"
+        + r"""
+from hexapod_transport_rl import WalkingSimulation
+
+with WalkingSimulation(num_robots=1, video_path="walking_commands.mp4") as sim:
+    sim.stop()
+    sim.run_for(seconds=0.8)
+
+    sim.set_velocity(robot_id=0, vx=0.12)
+    sim.run_for(seconds=3.0)
+    print("前進後の位置 [m]:", sim.positions)
+
+    sim.set_velocity(robot_id=0, vy=0.06)
+    sim.run_for(seconds=2.4)
+    print("左移動後の位置 [m]:", sim.positions)
+
+    sim.set_velocity(robot_id=0, yaw_rate=0.40)
+    sim.run_for(seconds=2.4)
+    print("旋回後の向き [rad]:", sim.headings)
+
+    sim.stop()
+    sim.run_for(seconds=0.8)
+''', output_dir=WALKING_DIR)
+display(Video(str(WALKING_DIR / "walking_commands.mp4"), embed=True))
+    """
+    )
+    markdown("""
+    ### 同じAPIで4台を動かす
+
+    `num_robots=4` とし、0〜3番へ別々の指令を設定します。
+    **指令の設定だけでは時間は進みません。** `run_for()` で4台が同時に動きます。
+    2番には前進と左移動を同時に指令します。固定歩行モデルは、停止から横移動だけを始めると速度の追従が弱い場合があります。
+    ここでも学習は行わず、荷物はありません。4台の協調運搬を学習する環境は、今後拡張する研究課題です。
     """)
+    code(
+        r"""
+FOUR_ROBOTS_DIR = PROJECT_DIR / "runs/four_robot_commands"
+run_example(r"""
+        + "'''"
+        + r"""
+from hexapod_transport_rl import WalkingSimulation
+
+with WalkingSimulation(num_robots=4, video_path="four_robots.mp4") as sim:
+    sim.run_for(seconds=0.8)
+    sim.set_velocity(robot_id=0, vx=0.10)
+    sim.set_velocity(robot_id=1, vx=0.05)
+    sim.set_velocity(robot_id=2, vx=0.08, vy=0.04)
+    sim.set_velocity(robot_id=3, yaw_rate=0.30)
+    sim.run_for(seconds=3.0)
+    print("4台の位置 [m]:", sim.positions)
+    print("4台の向き [rad]:", sim.headings)
+    sim.stop()
+    sim.run_for(seconds=0.8)
+''', output_dir=FOUR_ROBOTS_DIR)
+display(Video(str(FOUR_ROBOTS_DIR / "four_robots.mp4"), embed=True))
+    """
+    )
     markdown("""
     ## 歩行コマンドから協調運搬へ
 
@@ -197,7 +256,7 @@ def main():
                                運搬方策を更新
     ```
 
-    歩行体験の指令リストは、運搬学習の教師には使いません。
+    歩行体験で指定したコマンドは、運搬学習の教師には使いません。
     次の工程では、環境APIの観測・行動・報酬を確認し、参考の運搬方策を再生してから、自分の運搬方策を学習します。
     """)
     markdown("""

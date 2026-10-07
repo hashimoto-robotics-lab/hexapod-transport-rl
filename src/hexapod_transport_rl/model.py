@@ -14,11 +14,23 @@ from .motor import add_motor
 def build_model(asset_root: Path, cfg: PushConfig) -> mujoco.MjModel:
     """Compose source robot copies, physical cargo, goal marker and DC motors."""
     root, world, robot_template = _prepare_scene(asset_root)
-    all_bits = _add_robots_and_floor(root, world, robot_template, cfg)
+    all_bits = _add_robots_and_floor(root, world, robot_template, cfg.num_robots)
     cargo = _add_cargo(world, cfg, all_bits)
     _add_goal_marker(world, cargo)
+    return _compile_model(root, cfg.num_robots)
+
+
+def build_walking_model(asset_root: Path, num_robots: int) -> mujoco.MjModel:
+    """Build a flat-floor walking scene containing only the requested robots."""
+    root, world, robot_template = _prepare_scene(asset_root)
+    root.set("model", "hexapod_walking")
+    _add_robots_and_floor(root, world, robot_template, num_robots)
+    return _compile_model(root, num_robots)
+
+
+def _compile_model(root: ET.Element, num_robots: int) -> mujoco.MjModel:
     spec = mujoco.MjSpec.from_string(ET.tostring(root, encoding="unicode"))
-    for i in range(cfg.num_robots):
+    for i in range(num_robots):
         for name in JOINT_NAMES:
             add_motor(spec, f"r{i}/{name}")
     return spec.compile()
@@ -75,14 +87,14 @@ def _prepare_scene(asset_root: Path) -> tuple[ET.Element, ET.Element, ET.Element
 
 
 def _add_robots_and_floor(
-    root: ET.Element, world: ET.Element, robot_template: ET.Element, cfg: PushConfig
+    root: ET.Element, world: ET.Element, robot_template: ET.Element, num_robots: int
 ) -> int:
     """Namespace each robot and enable external contacts, excluding self-collision.
 
     Collision bits: floor=1, robot i=1<<(i+1), cargo=1<<(N+1).
-    The returned mask includes every physical participant.
+    The returned mask reserves one additional bit for optional cargo.
     """
-    all_bits = (1 << (cfg.num_robots + 2)) - 1
+    all_bits = (1 << (num_robots + 2)) - 1
     _add_floor_material(root)
     ET.SubElement(
         world,
@@ -96,7 +108,7 @@ def _add_robots_and_floor(
         material="push_floor_grid",
     )
     sensors = ET.SubElement(root, "sensor")
-    for i in range(cfg.num_robots):
+    for i in range(num_robots):
         body = copy.deepcopy(robot_template)
         bit = 1 << (i + 1)
         for element in body.iter():

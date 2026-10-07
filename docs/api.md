@@ -1,7 +1,42 @@
-# 学習環境API
+# 歩行コマンドと学習環境API
 
 実行手順は [README](../README.md)、内部構造は [コードガイド](code-guide.md) を参照してください。
+歩行の体験には `WalkingSimulation` を使います。
 学習ではGymnasium形式の `reset` / `step` を使います。報酬は2台で共有する1つの値です。
+
+## 学習済みロボットへの速度指令
+
+```python
+from hexapod_transport_rl import WalkingSimulation
+
+with WalkingSimulation(num_robots=4, video_path="walking.mp4") as sim:
+    sim.set_velocity(robot_id=0, vx=0.12)       # 前進 [m/s]
+    sim.set_velocity(robot_id=1, vy=0.06)       # 左移動 [m/s]
+    sim.set_velocity(robot_id=2, yaw_rate=0.4)  # 左旋回 [rad/s]
+    sim.run_for(seconds=3.0)                   # 全機が同時に動く
+    sim.stop()
+    sim.run_for(seconds=0.8)                   # 減速を観察する
+```
+
+| 操作 | 意味 |
+|---|---|
+| `WalkingSimulation(num_robots=1)` | 荷物のない床に1〜4台を置き、固定歩行モデルを読み込む |
+| `set_velocity(robot_id, vx=0, vy=0, yaw_rate=0)` | 1台の速度指令を置き換える。時間は進めない |
+| `run_for(seconds=...)` | 現在の指令で全機を同時に進める。時間は0.04秒刻み |
+| `stop(robot_id=...)` / `stop()` | 1台／全台にゼロ速度を指令する。時間は進めない |
+| `reset(poses=[[x, y, yaw], ...])` | 世界座標の位置[m]と向き[rad]で配置し、全機の指令・時刻をリセット |
+| `positions` / `headings` / `velocities` / `time` | 実測位置[m]・向き[rad]・現在の目標速度・経過時刻[s] |
+| `render()` | RGB画像を取得する。`video_path` を指定すると自動録画する |
+
+指令は**機体座標**です。前進 `vx` は−0.15〜0.20 m/s、左移動 `vy` は±0.10 m/s、左旋回 `yaw_rate` は±0.60 rad/sです。
+範囲外の指令はエラーにします。省略した成分はゼロ、他の機体の指令は維持します。
+`set_velocity()` で設定した指令は、次に変更するまで続きます。
+停止も目標速度の指定であり、実際の減速を観察するには `run_for()` で時間を進めます。
+`positions` などの配列はコピーを返すため、配列を書き換えてもシミュレーションは変わりません。
+
+`with` を抜けると動画を保存して描画資源を解放します。録画は640×480・5 fps、歩行は25 Hz、物理計算は200 Hzです。
+録画する場合はColabガイドの描画環境を準備してください。録画しない操作には描画環境は不要です。
+歩行体験では報酬や運搬モデルを使いません。4台の歩行操作と、4台の協調運搬を学習できることは別々に検証します。
 
 ## 押す環境
 

@@ -24,11 +24,11 @@ def test_notebook_and_nested_worker_scripts_compile():
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
-                and node.func.id == "run_python"
+                and node.func.id in ("run_python", "run_example")
             ):
                 compile(ast.literal_eval(node.args[0]), f"worker_{index}", "exec")
                 workers += 1
-    assert workers == 2
+    assert workers == 4
 
 
 def bootstrap_namespace():

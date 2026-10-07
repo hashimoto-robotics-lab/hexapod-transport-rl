@@ -13,7 +13,8 @@
 コード・ロボット形状・学習済みモデルは、Step 1で公開リポジトリから自動取得します。
 
 まず研究の動機を読み、学習済み歩行モデルへ前進・横移動・旋回のコマンドを送って、動画で動きを確かめます。
-続いて、2台へのコマンドを決める運搬方策を学習します。
+歩行の操作は `WalkingSimulation` の `set_velocity()`・`run_for()`・`stop()` に統一し、1台と4台の例を用意しています。
+続いて、2台へのコマンドを決める運搬方策を学習します。4台の協調運搬学習は、今後の拡張課題です。
 上から順に、準備、歩行体験、API確認、参考の運搬モデルの再生、学習、検証用モデル選定、独立したテスト、
 学習曲線・評価表、動画、結果ZIPの保存を実行します。CPUランタイムを使用できます。
 
@@ -77,12 +78,13 @@ uv sync --locked
 ```text
 notebooks/hexapod_transport_rl_colab.ipynb  学生向けの入口
 src/hexapod_transport_rl/                 学習・環境・評価
+  walking.py                            学生向け：1〜4台への速度指令
+  locomotion.py                         歩行・運搬で共通の固定歩行モデル
   assets/robot/                          XMLとメッシュ
   assets/locomotion/                     固定歩行モデル
 checkpoints/                             学習済みの運搬モデル
 docs/                                    教材とAPIの説明
 tests/                                   物理・学習・モデル再生の確認
-tools/walking_demo.py                     導入：固定歩行モデルへの速度指令と録画
 tools/build_colab.py                      教員向け：ノートブックの再生成
 runs/                                    実験ログ・動画（配布には不要）
 ```

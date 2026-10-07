@@ -4,8 +4,6 @@ A high-level step runs the frozen walking policy, advances MuJoCo, measures
 contacts, then computes termination and a shared team reward. See docs/code-guide.md.
 """
 
-import hashlib
-import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,16 +14,8 @@ import torch
 from numpy.typing import ArrayLike
 
 from .config import (
-    COMMAND_HIGH,
     COMMAND_LIMIT,
-    COMMAND_LOW,
-    CONTROL_DT,
-    JOINT_NAMES,
-    MODEL_RELATIVE_PATH,
-    PHYSICS_DT,
     PHYSICS_STEPS,
-    POLICY_RELATIVE_PATH,
-    STAND,
     STAND_HEIGHT,
     PushConfig,
     action_to_command,
@@ -34,8 +24,8 @@ from .config import (
     wrap,
 )
 from .contacts import BODY, ContactTracker
+from .locomotion import WalkingController
 from .model import build_model
-from .motor import voltage_command
 from .types import Info, Observation, ResetResult, StepResult
 
 # Physical failure/settling thresholds; distances in m and speeds in m/s or rad/s.
@@ -78,9 +68,11 @@ class PushEnv:
         self.asset_root = (
             Path(asset_root) if asset_root else find_asset_root()
         ).resolve()
-        self._load_locomotion_policy()
         self.model = build_model(self.asset_root, self.cfg)
         self.data = mujoco.MjData(self.model)
+        self.walking = WalkingController(
+            self.asset_root, self.model, self.data, self.cfg.num_robots
+        )
         self._index_model()
         self.contacts = ContactTracker(self.model, self.cfg.num_robots)
         # Preserve the diagnostic geom lookup attributes of the original API.
@@ -91,76 +83,24 @@ class PushEnv:
         self.obs_dim = self.observe().shape[-1]
         self.state_dim = self.cfg.num_robots * self.obs_dim
 
-    def _load_locomotion_policy(self) -> None:
-        """Validate the source deployment contract before loading frozen weights."""
-        policy_dir = self.asset_root / POLICY_RELATIVE_PATH
-        metadata = json.loads((policy_dir / "policy.json").read_text())
-        policy_path = policy_dir / "controller.ts"
-        self.policy_sha256 = hashlib.sha256(policy_path.read_bytes()).hexdigest()
-        if self.policy_sha256 != metadata["sha256"]["controller.ts"]:
-            raise ValueError("Locomotion controller hash differs from policy.json")
-        if tuple(metadata["joint_names"]) != JOINT_NAMES:
-            raise ValueError("Locomotion joint order differs from hexapod")
-        if (
-            metadata["actor_input"]["shape"] != ["batch", 63]
-            or metadata["control_hz"] != 1 / CONTROL_DT
-            or metadata["physics_hz_training"] != 1 / PHYSICS_DT
-            or metadata["action_scale_rad"] != 0.3
-            or metadata["forward_axis"] != "+X"
-            or metadata["action_clip"] != [-3.0, 3.0]
-            or tuple(metadata["action_joint_names"]) != JOINT_NAMES
-            or not np.allclose(metadata["reference_joint_position_rad"], STAND)
-            or not np.allclose(
-                metadata["command_ranges"],
-                np.stack([COMMAND_LOW, COMMAND_HIGH], axis=-1),
-            )
-        ):
-            raise ValueError(
-                "Expected hexapod 63-input IMU policy at 25 Hz with +X forward"
-            )
-        self.policy_metadata = metadata
-        self.model_sha256 = hashlib.sha256(
-            (self.asset_root / MODEL_RELATIVE_PATH).read_bytes()
-        ).hexdigest()
-        self.controller = torch.jit.load(str(policy_path), map_location="cpu").eval()
-
     def _index_model(self) -> None:
-        """Cache each robot's MuJoCo addresses; qpos and qvel layouts differ."""
-        n = self.cfg.num_robots
-        self.base_ids = np.array([self.model.body(f"r{i}/base").id for i in range(n)])
-        self.gyro_indices = np.array(
-            [
-                self.model.sensor(f"r{i}/imu_ang_vel").adr[0] + np.arange(3)
-                for i in range(n)
-            ]
-        )
-        self.root_q = np.array(
-            [self.model.joint(f"r{i}/floating_base_joint").qposadr[0] for i in range(n)]
-        )
-        self.root_v = np.array(
-            [self.model.joint(f"r{i}/floating_base_joint").dofadr[0] for i in range(n)]
-        )
-        self.joint_q = np.array(
-            [
-                [self.model.joint(f"r{i}/{j}").qposadr[0] for j in JOINT_NAMES]
-                for i in range(n)
-            ]
-        )
-        self.joint_v = np.array(
-            [
-                [self.model.joint(f"r{i}/{j}").dofadr[0] for j in JOINT_NAMES]
-                for i in range(n)
-            ]
-        )
-        self.actuators = np.array(
-            [
-                [self.model.actuator(f"r{i}/{j}").id for j in JOINT_NAMES]
-                for i in range(n)
-            ]
-        )
+        """Expose robot diagnostics and index the cargo separately from walking."""
+        self.base_ids = self.walking.base_ids
+        self.gyro_indices = self.walking.gyro_indices
+        self.root_q, self.root_v = self.walking.root_q, self.walking.root_v
+        self.joint_q, self.joint_v = self.walking.joint_q, self.walking.joint_v
+        self.actuators = self.walking.actuators
+        self.controller = self.walking.controller
+        self.policy_metadata = self.walking.policy_metadata
+        self.policy_sha256 = self.walking.policy_sha256
+        self.model_sha256 = self.walking.model_sha256
         self.cargo_id = self.model.body("cargo").id
         self.cargo_q = self.model.joint("cargo_free").qposadr[0]
         self.cargo_v = self.model.joint("cargo_free").dofadr[0]
+
+    @property
+    def previous_action(self) -> np.ndarray:
+        return self.walking.previous_action
 
     @property
     def cargo_xy(self) -> np.ndarray:
@@ -196,11 +136,7 @@ class PushEnv:
         mujoco.mj_resetData(self.model, self.data)
         cargo_heading = self._reset_cargo_and_goal(randomize)
         self._reset_robot_poses(cargo_heading, randomize)
-        self.data.qpos[self.joint_q] = STAND
-        self.data.ctrl[self.actuators] = 0  # native DC motors take volts
-        self.previous_action = np.zeros(
-            (self.cfg.num_robots, len(JOINT_NAMES)), dtype=np.float32
-        )
+        self.walking.reset()
         self.last_commands = np.zeros((self.cfg.num_robots, 3), dtype=np.float32)
         self.steps = 0
         self.success_time = 0.0
@@ -299,17 +235,8 @@ class PushEnv:
         return self.observe().ravel()
 
     def locomotion_inputs(self, commands: ArrayLike) -> tuple[torch.Tensor, ...]:
-        """Match the exported controller: gyro in IMU axes, gravity in body axes."""
-        gravity = -self.data.xmat[self.base_ids].reshape(-1, 3, 3)[:, 2, :]
-        values = (
-            self.data.qpos[self.joint_q],
-            self.data.qvel[self.joint_v],
-            self.previous_action,
-            commands,
-            self.data.sensordata[self.gyro_indices],
-            gravity,
-        )
-        return tuple(torch.from_numpy(np.asarray(v, dtype=np.float32)) for v in values)
+        """Controller input diagnostics; normal callers use step()."""
+        return self.walking.inputs(commands)
 
     def info(self) -> Info:
         """Current cargo metrics, before step-specific reward/contact diagnostics."""
@@ -359,31 +286,13 @@ class PushEnv:
     def _advance_physics(
         self, commands: np.ndarray, on_control_step: Callable[[], None] | None
     ) -> None:
-        """Hold velocity commands; refresh joint targets at 25 Hz, voltage at 200 Hz."""
         self.contacts.reset()
-        for _ in range(self.cfg.high_level_decimation):
-            mujoco.mj_forward(self.model, self.data)
-            target, previous = self.controller(*self.locomotion_inputs(commands))
-            if not torch.isfinite(target).all() or not torch.isfinite(previous).all():
-                raise FloatingPointError("Non-finite walking controller output")
-            self.previous_action = previous.numpy().copy()
-            targets = target.numpy()
-            for _ in range(PHYSICS_STEPS):
-                self.data.ctrl[self.actuators] = voltage_command(
-                    targets, self.data.qpos[self.joint_q]
-                )
-                mujoco.mj_step(self.model, self.data)
-                self.contacts.record(self.model, self.data)
-            if on_control_step is not None:
-                mujoco.mj_forward(self.model, self.data)
-                on_control_step()
-        # Derived transforms otherwise lag qpos by one physics tick.
-        mujoco.mj_forward(self.model, self.data)
-        if (
-            not np.isfinite(self.data.qpos).all()
-            or not np.isfinite(self.data.qvel).all()
-        ):
-            raise FloatingPointError("Non-finite MuJoCo state")
+        self.walking.advance(
+            commands,
+            self.cfg.high_level_decimation,
+            on_control_step=on_control_step,
+            on_physics_step=lambda: self.contacts.record(self.model, self.data),
+        )
 
     def _update_episode_status(self, info: Info) -> tuple[bool, bool]:
         """Update the success hold timer and append failure reasons to info.
