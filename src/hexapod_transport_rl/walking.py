@@ -22,7 +22,11 @@ class WalkingSimulation:
     """
 
     def __init__(
-        self, num_robots: int = 1, *, video_path: str | Path | None = None
+        self,
+        num_robots: int = 1,
+        *,
+        record: bool = False,
+        video_path: str | Path | None = None,
     ) -> None:
         if (
             isinstance(num_robots, bool)
@@ -40,6 +44,9 @@ class WalkingSimulation:
         self._closed = False
         self._renderer = None
         self._writer = None
+        self._record = record
+        self._frames: list[np.ndarray] = []
+        self._recording_started = False
         self._video_path = Path(video_path) if video_path is not None else None
         self._recording_ticks = 0
         self.reset()
@@ -81,6 +88,16 @@ class WalkingSimulation:
         """A copy of the current target velocities [vx, vy, yaw_rate], shape (N,3)."""
         self._require_open()
         return self._commands.copy()
+
+    @property
+    def frames(self) -> list[np.ndarray]:
+        """Recorded 640×480 RGB frames at 5 fps, available after close().
+
+        Set record=True to collect frames for mediapy.show_video(frames, fps=5).
+        Returns a new list referencing the recorded images. reset() starts a new
+        episode but preserves the recording, just as it does for video_path.
+        """
+        return self._frames.copy()
 
     def reset(self, *, poses: ArrayLike | None = None) -> None:
         """Stop all robots and place them at world [x m, y m, yaw rad] poses.
@@ -151,10 +168,14 @@ class WalkingSimulation:
             raise ValueError("seconds must be a multiple of 0.04 s")
         # Start recording only when time is advanced; invalid commands cannot
         # create video files or partially advance the simulation.
-        if self._video_path is not None and self._writer is None:
-            self._video_path.parent.mkdir(parents=True, exist_ok=True)
-            self._writer = imageio.get_writer(str(self._video_path), fps=5)
-            self._writer.append_data(self.render())
+        if (
+            self._record or self._video_path is not None
+        ) and not self._recording_started:
+            if self._video_path is not None:
+                self._video_path.parent.mkdir(parents=True, exist_ok=True)
+                self._writer = imageio.get_writer(str(self._video_path), fps=5)
+            self._record_frame()
+            self._recording_started = True
         self._walking.advance(self._commands, ticks, on_control_step=self._after_tick)
 
     def _after_tick(self) -> None:
@@ -164,8 +185,16 @@ class WalkingSimulation:
         ):
             raise RuntimeError("A robot fell; reset() before trying another command")
         self._recording_ticks += 1
-        if self._writer is not None and self._recording_ticks % 5 == 0:
-            self._writer.append_data(self.render())
+        if self._recording_started and self._recording_ticks % 5 == 0:
+            self._record_frame()
+
+    def _record_frame(self) -> None:
+        """Render once for both notebook frames and optional streaming MP4."""
+        frame = self.render()
+        if self._record:
+            self._frames.append(frame)
+        if self._writer is not None:
+            self._writer.append_data(frame)
 
     def render(self) -> np.ndarray:
         """Return a 640×480 RGB image, with original robot colors and a grid floor."""

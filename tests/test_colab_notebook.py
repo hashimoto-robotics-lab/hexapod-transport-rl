@@ -63,6 +63,7 @@ def test_student_notebook_excludes_infrastructure_settings_and_payloads():
         "HEXAPOD_GIT_TOKEN",
         "checkpoint_iteration",
         "Popen",
+        "IPython.display import Video",
     ):
         assert unnecessary not in source
     assert NOTEBOOK.stat().st_size < 25_000

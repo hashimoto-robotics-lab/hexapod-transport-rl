@@ -80,6 +80,9 @@ ColabのCPUランタイムを使います。GPUによる学習高速化はこの
 歩行と環境APIは、ColabのPythonで通常の `import` とAPI呼び出しを使って操作します。
 Python 3.12・3.13に対応し、既存のNumPy・PyTorchが対応範囲内なら、そのまま利用します。
 ウィンドウなしの描画設定は、MuJoCoをimportする前に準備APIが行います。
+歩行は `record=True` でRGBフレームを集め、`media.show_video(sim.frames, fps=5)` で表示します。
+参考方策と学習後の運搬動画もmediapyを使います。FFmpegは同梱のimageio-ffmpegから自動設定します。
+表示方法は [MuJoCo公式チュートリアル](https://github.com/google-deepmind/mujoco/blob/main/python/tutorial.ipynb) と共通です。
 並列学習と運搬評価は、uvで用意したPython 3.12とlockfileの専用環境で実行します。
 セルで使う版は `runtime.json`、学習で使う版は `training_runtime.json` に分けて記録します。
 MuJoCoの動画はOSMesaによるソフトウェア描画、標準640×480・5 fpsにして描画負荷を下げています。

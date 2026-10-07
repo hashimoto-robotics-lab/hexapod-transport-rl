@@ -7,15 +7,18 @@
 ## 学習済みロボットへの速度指令
 
 ```python
+import mediapy as media
 from hexapod_transport_rl import WalkingSimulation
 
-with WalkingSimulation(num_robots=4, video_path="walking.mp4") as sim:
+with WalkingSimulation(num_robots=4, record=True) as sim:
     sim.set_velocity(robot_id=0, vx=0.12)       # 前進 [m/s]
     sim.set_velocity(robot_id=1, vy=0.06)       # 左移動 [m/s]
     sim.set_velocity(robot_id=2, yaw_rate=0.4)  # 左旋回 [rad/s]
     sim.run_for(seconds=3.0)                   # 全機が同時に動く
     sim.stop()
     sim.run_for(seconds=0.8)                   # 減速を観察する
+
+media.show_video(sim.frames, fps=5)
 ```
 
 | 操作 | 意味 |
@@ -26,7 +29,8 @@ with WalkingSimulation(num_robots=4, video_path="walking.mp4") as sim:
 | `stop(robot_id=...)` / `stop()` | 1台／全台にゼロ速度を指令する。時間は進めない |
 | `reset(poses=[[x, y, yaw], ...])` | 世界座標の位置[m]と向き[rad]で配置し、全機の指令・時刻をリセット |
 | `positions` / `headings` / `velocities` / `time` | 実測位置[m]・向き[rad]・現在の目標速度・経過時刻[s] |
-| `render()` | RGB画像を取得する。`video_path` を指定すると自動録画する |
+| `render()` | 現在の640×480 RGB画像を取得する |
+| `WalkingSimulation(record=True)` / `frames` | 5 fpsで画像を記録し、mediapyに渡すフレーム配列を取得する |
 
 指令は**機体座標**です。前進 `vx` は−0.15〜0.20 m/s、左移動 `vy` は±0.10 m/s、左旋回 `yaw_rate` は±0.60 rad/sです。
 範囲外の指令はエラーにします。省略した成分はゼロ、他の機体の指令は維持します。
@@ -34,7 +38,14 @@ with WalkingSimulation(num_robots=4, video_path="walking.mp4") as sim:
 停止も目標速度の指定であり、実際の減速を観察するには `run_for()` で時間を進めます。
 `positions` などの配列はコピーを返すため、配列を書き換えてもシミュレーションは変わりません。
 
-`with` を抜けると動画を保存して描画資源を解放します。録画は640×480・5 fps、歩行は25 Hz、物理計算は200 Hzです。
+`with` を抜けると描画資源を解放します。`sim.frames` はその後も取得でき、mediapyで表示・保存できます。
+録画は640×480・5 fps、歩行は25 Hz、物理計算は200 Hzです。
+`reset()` はロボットの状態を初期化しますが、記録したフレームは保持します。
+フレームを集め直すときは、新しい `WalkingSimulation` を作ります。
+
+ファイルとして保存したい場合は `media.write_video("walking.mp4", sim.frames, fps=5)` を使います。
+長い動画をメモリに蓄積せず保存する用途には、従来の `video_path="walking.mp4"` も使えます。
+`record=True` を指定しなければメモリへのフレーム記録は行いません。
 録画する場合はColabガイドの描画環境を準備してください。録画しない操作には描画環境は不要です。
 歩行体験では報酬や運搬モデルを使いません。4台の歩行操作と、4台の協調運搬を学習できることは別々に検証します。
 

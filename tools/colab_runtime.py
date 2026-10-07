@@ -21,7 +21,7 @@ import time
 import zipfile
 from pathlib import Path
 
-from IPython.display import HTML, Image, Video, display
+from IPython.display import HTML, Image, display
 
 
 class ColabLesson:
@@ -110,6 +110,10 @@ class ColabLesson:
         import torch
 
         torch.set_num_threads(1)
+        import imageio_ffmpeg
+        import mediapy as media
+
+        media.set_ffmpeg(imageio_ffmpeg.get_ffmpeg_exe())
 
     def configure(
         self,
@@ -451,7 +455,7 @@ class ColabLesson:
         reference = json.loads(reference_result.read_text())
         print("参考方策の成功:", reference["successes"], "/ 1")
         print("最終位置誤差 [m]:", reference["mean_final_distance_m"])
-        display(Video(str(reference_dir / "video/seed_70000.mp4"), embed=True))
+        self._show_video(reference_dir / "video/seed_70000.mp4")
 
     def prepare_pusher(self):
         """Use a reward-trained pusher or learn it from random weights."""
@@ -677,7 +681,7 @@ class ColabLesson:
             )
         learned = json.loads(learned_result.read_text())
         print("自分の方策の運搬成功:", learned["successes"], "/ 1")
-        display(Video(str(learned_dir / "video/seed_82000.mp4"), embed=True))
+        self._show_video(learned_dir / "video/seed_82000.mp4")
 
     def save_results(self):
         """Archive the complete experiment and offer a Colab download."""
@@ -726,3 +730,10 @@ Path(sys.argv[1]).write_text(json.dumps(runtime, indent=2) + "\n")
             ["-c", source, self.run_dir / "training_runtime.json"],
             "record_training_runtime",
         )
+
+    def _show_video(self, path):
+        """Display a recorded transport rollout using the same mediapy UI."""
+        import mediapy as media
+
+        frames = media.read_video(str(path))
+        media.show_video(frames, fps=frames.metadata.fps)

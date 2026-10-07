@@ -128,18 +128,19 @@ lesson = ColabLesson(PROJECT_DIR)
 | `yaw_rate` | rad/s | −0.60〜0.60 | 左旋回 |
 
 下のAPI呼び出しを1つ変えて再実行し、動きの違いを確かめてください。
-`with` は最後に動画の保存と後片付けを行います。
+`record=True` は描画したRGB画像を5 fpsで記録します。`sim.frames` が画像の配列です。
+`with` を抜けて描画資源を解放した後、`media.show_video(sim.frames, fps=5)` で動画を表示します。
+表示方法は [MuJoCo公式チュートリアル](https://github.com/google-deepmind/mujoco/blob/main/python/tutorial.ipynb) と同じmediapyを使います。
 通常のPythonコードとして実行します。
 セルに分けて動かす場合は `sim = WalkingSimulation(...)` で生成し、最後に `sim.close()` を呼びます。
 **最初は `set_velocity()` の速度と `run_for()` の時間を変更してみましょう。**
 `run_for()` の時間は、歩行制御周期の0.04秒刻みで指定します。
 """)
     code(r"""
-from IPython.display import Video, display
+import mediapy as media
 from hexapod_transport_rl import WalkingSimulation
 
-walking_video = PROJECT_DIR / "runs/walking_commands.mp4"
-with WalkingSimulation(num_robots=1, video_path=walking_video) as sim:
+with WalkingSimulation(num_robots=1, record=True) as sim:
     sim.stop()
     sim.run_for(seconds=0.8)
 
@@ -157,7 +158,8 @@ with WalkingSimulation(num_robots=1, video_path=walking_video) as sim:
 
     sim.stop()
     sim.run_for(seconds=0.8)
-display(Video(str(walking_video), embed=True))
+
+media.show_video(sim.frames, fps=5)
 """)
     markdown(r"""
 ### 同じAPIで4台を動かす
@@ -170,8 +172,7 @@ display(Video(str(walking_video), embed=True))
     code(r"""
 from hexapod_transport_rl import WalkingSimulation
 
-four_robots_video = PROJECT_DIR / "runs/four_robots.mp4"
-with WalkingSimulation(num_robots=4, video_path=four_robots_video) as sim:
+with WalkingSimulation(num_robots=4, record=True) as sim:
     sim.run_for(seconds=0.8)
     sim.set_velocity(robot_id=0, vx=0.10)
     sim.set_velocity(robot_id=1, vx=0.05)
@@ -182,7 +183,8 @@ with WalkingSimulation(num_robots=4, video_path=four_robots_video) as sim:
     print("4台の向き [rad]:", sim.headings)
     sim.stop()
     sim.run_for(seconds=0.8)
-display(Video(str(four_robots_video), embed=True))
+
+media.show_video(sim.frames, fps=5)
 """)
     markdown(r"""
 ## 歩行コマンドから協調運搬へ

@@ -25,6 +25,8 @@ def test_scene_contains_only_requested_robots_and_commands_do_not_move_time(coun
         assert sim.velocities[count - 1, 0] == pytest.approx(0.12)
         sim.run_for(seconds=0.8)
         assert sim.time == pytest.approx(0.8)
+        assert sim.frames == []
+        assert sim._renderer is None  # Headless control must not start rendering.
         sim.reset()
         assert sim.time == 0
         np.testing.assert_array_equal(sim.velocities, np.zeros((count, 3)))
@@ -94,3 +96,38 @@ def test_invalid_inputs_do_not_change_state_and_closed_simulation_rejects_comman
     sim.close()
     with pytest.raises(RuntimeError, match="closed"):
         sim.set_velocity(vx=0.1)
+
+
+def test_recording_survives_close_and_matches_streaming_video(tmp_path):
+    import imageio.v2 as imageio
+    import imageio_ffmpeg
+    import mediapy as media
+
+    path = tmp_path / "walking.mp4"
+    with WalkingSimulation(record=True, video_path=path) as sim:
+        with pytest.raises(ValueError):
+            sim.run_for(seconds=0.03)
+        assert sim.frames == []
+        assert not path.exists()
+        sim.run_for(seconds=0.4)
+        assert len(sim.frames) == 3  # Initial frame and 0.2/0.4-second snapshots.
+        sim.set_velocity(vx=0.12)
+        sim.run_for(seconds=0.4)
+        assert len(sim.frames) == 5  # No duplicate initial frame between commands.
+        assert sim.time == pytest.approx(0.8)
+        frames = sim.frames
+        frames.clear()
+        assert len(sim.frames) == 5
+    frames = sim.frames  # Displaying with mediapy works after resources are closed.
+    assert all(
+        frame.shape == (480, 640, 3) and frame.dtype == np.uint8 for frame in frames
+    )
+    assert not np.shares_memory(frames[0], frames[-1])
+    assert not np.array_equal(frames[0], frames[-1])
+    with imageio.get_reader(path) as reader:
+        assert reader.get_meta_data()["fps"] == 5
+        assert reader.count_frames() == len(frames)
+    media.set_ffmpeg(imageio_ffmpeg.get_ffmpeg_exe())
+    html = media.show_video(frames, fps=5, return_html=True)
+    assert "<video" in html and "base64," in html
+    sim.close()
