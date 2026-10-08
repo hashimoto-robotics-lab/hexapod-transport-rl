@@ -31,5 +31,20 @@
     "advance_threshold": 0.75,
     "evaluation": "docs/results/pose_task_20261007.json",
     "illustrative_seed": 87004
+  },
+  "goal_side_pose.pt": {
+    "source": "runs/goal_side_velocity_choices_no_angle_20261008_01/baseline/pose.pt",
+    "purpose": "Teacher-free TorchRL MAPPO: equal-bar T, goal-side starts, random actor/critic, seven-stage curriculum, categorical velocity commands; playback reference only, not student initialization",
+    "sha256": "53f17fe41da3b126576f1c31360132db2eb7d8a7d8bb56e7110af594db92f4ce",
+    "team_steps": 3145728,
+    "seed": 20261010,
+    "evaluation": "docs/results/goal_side_improved_20261008.json",
+    "illustrative_seeds": [
+      86006,
+      86008
+    ],
+    "native_test_successes": 44,
+    "native_test_episodes": 50,
+    "num_robots": 2
   }
 }

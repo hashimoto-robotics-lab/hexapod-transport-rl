@@ -1,0 +1,122 @@
+{
+  "cpu_suite": {
+    "passed": 107,
+    "skipped": 18,
+    "seconds": 137.25,
+    "render_backend": "OSMesa",
+    "command": "PYTHONPATH=src MUJOCO_GL=osmesa .venv/bin/python -m pytest -q",
+    "log": "/tmp/goal_side_published_cpu_tests.log"
+  },
+  "gpu_checks": {
+    "passed_across_suite_and_focused_retry": 16,
+    "scope": "MuJoCo Warp reset/observations/rewards/physics, independent curriculum validation, timeout bootstrapping, real PPO updates, 2/4-robot categorical save/reload, native rendering",
+    "note": "The render check was first launched without MUJOCO_GL and failed to create a context; with the required EGL setting the same check passed.",
+    "render_retry_passed": 1,
+    "render_retry_seconds": 9.7,
+    "final_categorical_checks_passed": 2,
+    "final_categorical_seconds": 10.84
+  },
+  "final_distribution_cpu_checks": {
+    "passed": 3,
+    "skipped_cuda_only": 2,
+    "seconds": 5.95
+  },
+  "notebook_research_cells": {
+    "verification": "All research/API code cells; installation excluded; learning reduced to 1 real GPU MAPPO rollout per condition; evaluation on nonreserved seeds 99000..99001; not evidence of learning performance",
+    "timing": [
+      {
+        "cell": 5,
+        "seconds": 4.552465869113803
+      },
+      {
+        "cell": 7,
+        "seconds": 0.8521550199948251
+      },
+      {
+        "cell": 9,
+        "seconds": 10.224611223908141
+      },
+      {
+        "cell": 11,
+        "seconds": 0.8810980410780758
+      },
+      {
+        "cell": 13,
+        "seconds": 0.00038220989517867565
+      },
+      {
+        "cell": 15,
+        "seconds": 0.4152066600508988
+      },
+      {
+        "cell": 17,
+        "seconds": 24.287626998964697
+      },
+      {
+        "cell": 19,
+        "seconds": 0.09142093197442591
+      },
+      {
+        "cell": 21,
+        "seconds": 0.02299674996174872
+      },
+      {
+        "cell": 23,
+        "seconds": 28.641161352861673
+      },
+      {
+        "cell": 24,
+        "seconds": 0.010033051017671824
+      },
+      {
+        "cell": 26,
+        "seconds": 0.16463497304357588
+      },
+      {
+        "cell": 27,
+        "seconds": 81.89630213286728
+      },
+      {
+        "cell": 29,
+        "seconds": 0.8612799209076911
+      }
+    ],
+    "zip": "/home/hashimoto/2026/10/hexapod_transport_rl/runs/curriculum_notebook_smoke_20261008_02.zip",
+    "run": "/home/hashimoto/2026/10/hexapod_transport_rl/runs/curriculum_notebook_smoke_20261008_02"
+  },
+  "notebook_sha256": "4bff7800ad2af5328ffd2b0624bb97dcc82a6062576c8edcd44302f36336a6bf",
+  "notebook_bootstrap": "Public checkout behavior tested locally; installer excluded from the GPU code-cell smoke check. This is not a hosted Colab/T4 run.",
+  "source_checks": [
+    "ruff check src tests tools",
+    "ruff format --check src tests tools",
+    "git diff --check"
+  ],
+  "media_checks": {
+    "rendering": "Actual native MuJoCo control states at 25 Hz, no interpolation or duplication",
+    "seed_86006": {
+      "codec": "h264",
+      "size": [
+        640,
+        480
+      ],
+      "fps": 25,
+      "frames": 486,
+      "duration_seconds": 19.44
+    },
+    "seed_86008": {
+      "codec": "h264",
+      "size": [
+        640,
+        480
+      ],
+      "fps": 25,
+      "frames": 611,
+      "duration_seconds": 24.44
+    },
+    "visually_inspected": [
+      "initial T->goal->robots",
+      "opposite-side navigation around the T",
+      "final cargo/goal alignment; grey robots and grid; no text overlays"
+    ]
+  }
+}

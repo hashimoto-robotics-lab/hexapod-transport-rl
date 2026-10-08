@@ -23,6 +23,20 @@ def rule_action(core, policy="feedback"):
     """A forward-only baseline or proportional pose feedback, in API coordinates."""
     if policy == "forward":
         vx = 0.0 if core.info()["distance"] < core.cfg.position_tolerance else 0.12
+        if core.cfg.action_frame == "cargo":
+            headings = wrap(core.yaw(core.base_ids) - core.cargo_yaw)
+            commands = np.column_stack(
+                (
+                    vx * np.cos(headings),
+                    vx * np.sin(headings),
+                    np.zeros(core.cfg.num_robots),
+                )
+            )
+            actions = commands / np.asarray(core.cfg.cargo_command_limits)
+            # Keep body-forward direction when a rotated command hits a T-frame limit.
+            actions /= np.maximum(1, np.abs(actions).max(axis=1, keepdims=True))
+            actions[:, 1:] *= np.where(core.cfg.slots >= 0, 1, -1)[:, None]
+            return actions.astype(np.float32)
         return np.tile([vx / 0.20, 0, 0], (core.cfg.num_robots, 1)).astype(np.float32)
     if policy != "feedback":
         raise ValueError("Rule baseline must be forward or feedback")
@@ -40,9 +54,17 @@ def rule_action(core, policy="feedback"):
         )
         local_velocity = velocity + [-angular * slot, angular * relative[i, 0]]
         local_velocity += 0.4 * formation_error
-        body_velocity = local_velocity @ rotation(headings[i])
-        commands.append([*body_velocity, angular - 1.5 * headings[i]])
-    actions = command_to_action(commands)
+        velocity_command = (
+            local_velocity
+            if core.cfg.action_frame == "cargo"
+            else local_velocity @ rotation(headings[i])
+        )
+        commands.append([*velocity_command, angular - 1.5 * headings[i]])
+    actions = (
+        np.clip(np.asarray(commands) / np.asarray(core.cfg.cargo_command_limits), -1, 1)
+        if core.cfg.action_frame == "cargo"
+        else command_to_action(commands)
+    )
     actions[:, 1:] *= np.where(core.cfg.slots >= 0, 1, -1)[:, None]
     return actions.astype(np.float32)
 
@@ -57,7 +79,7 @@ def _run_batch(config, checkpoint, policy, seeds, video_dir, asset_root, width, 
     env = PosePushEnv(
         config,
         asset_root,
-        render_mode="rgb_array" if video_dir else None,
+        render_mode="rgb_array_list" if video_dir else None,
         width=width,
         height=height,
     )
@@ -77,7 +99,7 @@ def _run_batch(config, checkpoint, policy, seeds, video_dir, asset_root, width, 
                 for name in ("body", "leg_link", "foot")
             }
             robot_contact = False
-            frames = [env.render()] if video_dir else None
+            frames = env.render() if video_dir else None
             terminated = truncated = False
             total_reward = 0.0
             trace = []
@@ -93,7 +115,7 @@ def _run_batch(config, checkpoint, policy, seeds, video_dir, asset_root, width, 
                     impulses[name] += info[f"{name}_normal_impulse_ns"]
                 robot_contact |= info["robot_collision_fraction"] > 0
                 if frames is not None:
-                    frames.append(env.render())
+                    frames.extend(env.render())
                     trace.append(
                         dict(
                             time=info["elapsed_seconds"],
@@ -138,7 +160,9 @@ def _run_batch(config, checkpoint, policy, seeds, video_dir, asset_root, width, 
                 directory = Path(video_dir)
                 directory.mkdir(parents=True, exist_ok=True)
                 media.write_video(
-                    directory / f"seed_{seed}.mp4", frames, fps=round(1 / config.dt)
+                    directory / f"seed_{seed}.mp4",
+                    frames,
+                    fps=env.metadata["render_fps"],
                 )
                 (directory / f"seed_{seed}_trace.json").write_text(
                     json.dumps(trace, indent=2) + "\n"

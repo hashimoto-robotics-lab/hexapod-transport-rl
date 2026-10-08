@@ -8,39 +8,33 @@ ROOT = Path(__file__).resolve().parents[1]
 CELLS = [
     (
         "markdown",
-        r"""# 六足ロボットの協調運搬：回転・停止と報酬設計
+        r"""# 六足ロボットの協調運搬：回り込み・回転・停止と報酬設計
 
 ## 研究のモチベーション
-複数のロボットで物資を運ぶには、相手と押し方を調整して荷物の位置と向きを合わせる必要があります。
-この研究では、**2台の六足ロボットが脚・足でT字物体を押し、向きを修正して目標に静止させる動作**を学習します。
-機体は元のロボットと同じ色、床にはグリッドを表示し、胴体に押すための突っ張りは追加しません。
+複数のロボットで物資を運ぶには、押す場所と速度を協調させる必要があります。
+この研究では、**六足ロボットがTの背後へ回り込み、脚・足で押して目標の位置と向きへ静止させる動作**を学習します。
+まず2台で、APIを理解し、報酬を変えると挙動がどう変わるかを評価します。
 
-Tは2本の線の交点から左端・右端・縦棒の先端までが **1：1：1** です。
-2台用では各0.65 m、棒の太さは0.20 mです。物理物体と緑色の目標は同じ形です。
-位置の基準はTの交点で、目標精度は **位置8 cm・角度5度以内で1秒静止** です。
-
-このノートブックの目的は、APIと報酬を理解し、**報酬を変えると協調の挙動がどう変わるか**を検証することです。
-研究の問いの例：「角度の改善を報酬に含めると、前進だけのルールや姿勢フィードバックより正確に運べるか？」
-強化学習が優れるかは、同じ初期配置の評価で判断します。
+Tの横棒と縦棒はどちらも1.3 m、太さは0.20 mです。
+最終課題の初期配置は **T → ゴール → ロボット**。ゴール側から約1.85 mの位置でTを向きます。
+制限時間40秒、目標は **位置8 cm・角度5度以内で低速状態を1秒維持** です。
+研究の問い：「角度のズレが残る時間のペナルティを強くすると、回り込み・運搬の精度は改善するか？」
+同じ未使用の配置で比較し、報酬の変更とルールベースとの挙動の違いを調べます。
 
 ## 学習済みロボットへコマンドを送るところから始める
 固定した歩行モデルは、前後・左右・旋回の指令を18関節の目標角度へ変換します。
-この歩行モデルを使い、**Tを押して回転・停止する上位方策を新しく学習**します。
-以前の整列・押すモデルの重みや、デモの行動は使いません。
+このモデルを使って、上位の運搬方策をランダムな重みから新しく学びます。旧運搬モデルや教師デモは使いません。
 
 ```text
-T・目標・相手の状態 → MAPPOの方策 → 各機の速度指令 → 固定歩行モデル → 脚・床・Tの接触
-        ↑                                                              ↓
-        └────────────────── 次の状態とチーム報酬 ─────────────────────┘
+T・目標・相手の状態 → MAPPO → 速度指令 → 固定歩行モデル → 脚・床・Tの接触
+          ↑                                                    ↓
+          └──────────────── 次の状態とチーム報酬 ───────────────┘
 ```
 
-上位方策には **TorchRLのMAPPO** を使います。各機のactorの重みを共有し、criticは全機の観測を見ます。
-ネットワークは `MultiAgentMLP`、経験収集は `Collector`、更新は `MAPPOLoss` です。
-GAEとPPO損失はTorchRLに任せ、収集・更新は普通のPythonセルから実行します。
-
-まず2台・0.3〜0.4 mの短距離課題で、左右の押し方と停止を調べます。
-APIは2〜4台を扱えますが、以下の実測・参考モデルは2台のものです。4台の運搬性能は別実験で確認します。
-上から順に、準備 → 歩行API → 運搬API → 報酬 → 比較学習 → 定量評価・動画、を実行してください。
+TorchRLのMAPPOを使い、各機のactorの重みを共有し、criticは全機の観測を見ます。
+経験収集は `Collector`、更新は `MAPPOLoss`。収集・更新は普通のPythonセルから実行します。
+APIは2〜4台を扱えます。4台の運搬性能は別実験で確認します。
+準備 → 歩行API → 運搬API → 報酬 → 比較学習 → 評価・動画、の順に進めてください。
 """,
     ),
     (
@@ -162,24 +156,45 @@ media.show_video(frames, fps=5)
     ),
     (
         "markdown",
+        r"""### 歩行指令を協調させた運搬の例
+左は目標との角度差約17度、右は約28度から、学習したMAPPOが回り込んで押す例です。
+ローカルGPUでランダムな重みから学習した参考動画で、教師データや学生の初期重みには使いません。
+未使用50配置の評価では44件成功しました。これは1つの学習seedの結果で、4台の性能は未検証です。
+再生は25 fps・実時間です。左の最終誤差は位置4.4 cm・角度1.0度、右は0.8 cm・4.9度です。
+""",
+    ),
+    (
+        "code",
+        r"""media.show_videos([
+    media.read_video(PROJECT_DIR / "docs/figures/goal_side_learned_25fps.mp4"),
+    media.read_video(PROJECT_DIR / "docs/figures/goal_side_turning_25fps.mp4"),
+], fps=25, columns=2)
+""",
+    ),
+    (
+        "markdown",
         r"""## 4. 運搬環境のAPIを理解する
-`HexapodPosePush-v0` は、近くに置かれた2台がTを押し、目標の位置・向きに静止させる環境です。
+`HexapodPosePush-v0` は、ゴール側から開始する2台が回り込んでTを押し、目標の位置・向きに静止させる環境です。
 `reset()`・`step()`・`render()` は歩行環境と共通です。1回の `step()` で0.2秒進みます。
 
 | 項目 | 2台の場合 |
 |---|---|
 | 観測 | `(2, 22)`：自分の状態・前回指令・目標・Tの速度・相手の相対状態 |
-| 行動 | `(2, 3)`：各機の前後・左右・旋回、各成分−1〜1 |
+| 行動 | `(2, 3)`：T基準のX移動・Y移動・旋回、各成分−1〜1 |
 | 報酬 | チーム全体で1つ |
 | 成功 | 位置8 cm・角度5度以内、低速状態を1秒維持 |
 
-観測の位置・向きはT基準です。左右の役割を同じactorで扱うため、右側の機体は左右・旋回の符号を反転します。
-行動もこの反転座標で渡し、環境が物理速度へ変換します。歩行APIのm/s・rad/sの指令とは区別してください。
+観測の位置・向きはT基準です。左右の役割を同じactorで扱うため、Yが負の側では、Y・旋回の符号を反転します。
+行動もこの反転座標で渡します。標準の倍率は `[0.2, 0.2, 0.6]`（m/s・m/s・rad/s）です。
+環境がT基準の移動を機体基準へ回転し、歩行モデルの速度範囲に収めます。この変換は行動を作る制御器ではありません。
+歩行APIは機体基準、運搬APIはT基準です。観測と行動の座標を揃え、座標変換を学習する負担を減らします。
 観測の詳細は [APIガイド](https://github.com/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/docs/api.md) にあります。
 
 `terminated` は成功・転倒等、`truncated` は時間切れです。どちらかがTrueなら次は `reset()` します。
 `info["reward_terms"]` は実際に返した報酬の内訳、`distance`・`yaw_error` は位置・角度の誤差です。
 `footprint_error_m` はTの3つの端と目標の対応する端の誤差で、見た目のズレを評価します。
+`PosePushConfig(num_robots=2)` が標準です。`robot_start="goal_side"` はT→ゴール→ロボット、
+`start_clearance=0.55` はTの縦棒先端よりさらに離す距離の基準です。
 下のセルではゼロ指令を2秒間送り、APIを確認します。新しい学習は行いません。
 """,
     ),
@@ -188,19 +203,19 @@ media.show_video(frames, fps=5)
         r"""from hexapod_transport_rl import PosePushConfig
 
 config = PosePushConfig(episode_seconds=2.0)
-env = gym.make("HexapodPosePush-v0", config=config, render_mode="rgb_array")
+env = gym.make("HexapodPosePush-v0", config=config, render_mode="rgb_array_list")
 observation, info = env.reset(seed=84000)
 print("観測:", env.observation_space, "行動:", env.action_space)
-frames = [env.render()]
+frames = env.render()
 terminated = truncated = False
 while not (terminated or truncated):
     action = np.zeros(env.action_space.shape, dtype=np.float32)
     observation, reward, terminated, truncated, info = env.step(action)
-    frames.append(env.render())
+    frames.extend(env.render())
     print("報酬:", reward, "内訳:", info["reward_terms"])
 print("位置誤差 [m]:", info["distance"], "角度誤差 [rad]:", info["yaw_error"])
 env.close()
-media.show_video(frames, fps=5)
+media.show_video(frames, fps=25)
 """,
     ),
     (
@@ -214,7 +229,10 @@ Tの位置・向きと、ロボットが押す位置に近づく程度を評価�
 | `position` | Tと目標の位置誤差から作る補助報酬 |
 | `position_error` | 位置誤差が残る時間へのペナルティ |
 | `orientation` | Tと目標の角度誤差から作る補助報酬 |
-| `approach` | ロボットと押す位置の距離から作る補助報酬 |
+| `orientation_error` | 角度のズレが残る時間へのペナルティ |
+| `approach` | Tの外側を通って押す位置へ近づく補助報酬 |
+| `approach_error` | 押す位置から離れたままでいる時間へのペナルティ |
+| `push_heading` | Tの背後で、押す向きへ向いていないことへのペナルティ |
 | `settling` | 目標付近でTが動き続けることへのペナルティ |
 | `command_change` | 指令の急な変化へのペナルティ |
 | `time`・`robot_contact`・`body_contact` | 時間・機体同士の接触・胴体とTの接触へのペナルティ |
@@ -224,10 +242,16 @@ Tの位置・向きと、ロボットが押す位置に近づく程度を評価�
 例えば位置の `Phi` は「−位置誤差／0.5」です。進捗のないステップでも割引による項が残るため、
 その瞬間の報酬が正でも、運搬が上手いとは限りません。**性能は別の評価で比較**します。
 成功・失敗の終端では `Phi=0` とし、時間切れでは最終観測の値を保ってGAEへ渡します。
-割引率は報酬とMAPPOで同じ0.99に揃えます。行動の教師値やルールの経路を与えるものではありません。
+割引率は報酬とMAPPOで同じ0.995に揃えます。行動の教師値やルールの経路を与えるものではありません。
 
-以下では**角度に関する補助報酬だけを0にする**比較を行います。
-角度の成功条件は両条件に残すため、「向きを評価しなくても成功報酬だけで回転を学べるか」を調べます。
+直線距離だけを評価すると、Tを通り抜ける方向へ近づこうとして停滞します。
+標準ではTの外側を通る距離を使い、脚の広がりを考慮して前方・側方に0.4 mの余裕を設けます。
+余裕領域へ入り込むほどコストを増やし、Tを通り抜ける近道を評価しません。後方は脚で押せる距離を保ちます。この距離計算は報酬用で、経路や速度指令をactorへ渡しません。
+`push_heading` はTの背後で強く働き、前方をTの縦棒の方向へ向ける姿勢を評価します。
+式を研究する場合は `pose_rewards.py` の `pose_reward_terms()` を編集します。
+
+以下では**残る角度のズレの係数 `orientation_error` だけを0から4へ増やす**比較を行います。
+角度の改善量の報酬と成功条件は両条件に残し、「残るズレを強く評価すると、より正確に静止できるか」を調べます。強いペナルティが学習を難しくする可能性も検証します。
 実験前に、どちらが速く正確に学べるか仮説を記録してください。
 """,
     ),
@@ -237,11 +261,11 @@ Tの位置・向きと、ロボットが押す位置に近づく程度を評価�
 from hexapod_transport_rl import PoseRewardWeights
 
 baseline_reward = PoseRewardWeights()
-changed_reward = replace(baseline_reward, orientation=0.0)
+changed_reward = replace(baseline_reward, orientation_error=4.0)
 
-baseline_config = PosePushConfig(reward_weights=baseline_reward)
+baseline_config = PosePushConfig(num_robots=2, reward_weights=baseline_reward, shaping_discount=0.995)
 changed_config = replace(baseline_config, reward_weights=changed_reward)
-conditions = {"baseline": baseline_config, "no_orientation": changed_config}
+conditions = {"baseline": baseline_config, "more_orientation_cost": changed_config}
 for name, config in conditions.items():
     print(name, config.reward_weights)
 """,
@@ -250,30 +274,34 @@ for name, config in conditions.items():
         "markdown",
         r"""## 6. 学習と比較実験の条件を揃える
 両条件で同じ初期重み・seed・歩行モデル・物理設定・学習量・MAPPO設定を使います。
-ロボットはTの近くに置き、長い回り込みを毎回シミュレーションする時間を省きます。
-初期状態の指定だけで、Tに外力を加えたり、移動経路を教師にしたりしません。
+最終課題は **T→ゴール→ロボット**、横棒・縦棒は同じ長さ、制限時間40秒です。
+いきなり難しい配置から始める代わりに、開始位置を45度ずつTの周りで移します。
+**各段階ともMAPPOが行動を決めます。** 教師デモ・旧運搬モデル・Tへの外力は使いません。
 
-成功率で次の段階へ進むカリキュラムを使います。検証は別seedで6試行、学習へ経験を渡しません。
-25ロールアウトごとに検証し、50%以上・各段階25ロールアウト以上で難度を上げます。
-短い予算で幅広い目標を経験させるため、検証6試行中3試行で成功したら進みます。
-変更は次のresetから適用します。到達段階は条件によって違うのでログに記録します。
+| 段階 | 開始位置 | 目標距離・角度差 | 成功精度（位置・角度・維持時間） |
+|---|---|---|---|
+| approach_0 | Tの背後・近く | 0.3 m・±5〜15度 | 8 cm・8度・0.6秒 |
+| approach_45 / 90 / 135 | 側方から徐々にゴール側へ | 0.3 m・±5〜15度 | 8 cm・8度・0.6秒 |
+| approach_180 | T→ゴール→ロボット | 0.3 m・±5〜15度 | 8 cm・8度・0.6秒 |
+| transport | T→ゴール→ロボット | 0.4 m・±5〜30度 | 8 cm・5度・0.6秒 |
+| settle | T→ゴール→ロボット | 0.4 m・±5〜30度 | 8 cm・5度・1秒 |
 
-| 段階 | 距離 | 目標との角度差 | 成功精度（位置・角度・維持時間） |
-|---|---:|---:|---|
-| rotate | 0.3 m | ±5〜15度 | 8 cm・8度・0.6秒 |
-| transport | 0.4 m | ±5〜30度 | 8 cm・5度・0.6秒 |
-| settle | 0.4 m | ±5〜30度 | 8 cm・5度・1秒 |
+![開始位置の段階](https://raw.githubusercontent.com/hashimoto-robotics-lab/hexapod-transport-rl/main/docs/figures/goal_side_curriculum.png)
 
-GPUでは**131,072チームステップ／条件**、CPUでは65,536を初期値にします。学習時間は後のCSVで実測します。
-前の整列課題と違い、今回は押す・回転・停止を含めて新しく学習するので、前の成功率や時間は保証しません。
-学習中に描画せず、GPUでは64並列の世界をMuJoCo Warpで進めます。
-固定歩行モデル、モーター制御、接触計測、観測・報酬もGPU上で計算します。
-1回の収集量を1,024チームステップに揃え、並列化しても十分な回数の方策更新を行います。
-CPUへの切り替え時は2並列です。カリキュラム検証と保存モデルの評価・動画はCPUで行い、
-GPUで学んだ方策が通常のGym環境でも動くかを確認します。T4での速度は実行ログから測ってください。
+別seedの6配置を8ロールアウトごとに検証します。3/6成功・現在の段階で8ロールアウト以上で進みます。
+変更は次のresetから適用し、検証経験はPPOへ渡しません。最終評価は常に最終課題の配置と精度です。
+両条件で到達段階が違う可能性も、報酬を変えた結果として記録します。
+
+GPUでは256世界・horizon 64・3,145,728チームステップ／条件を使います。
+1回の収集は16,384ステップ、速度指令は5 Hzなので、各世界で12.8秒間を観測してから更新します。
+CPUでは2世界・horizon 128・1,024ステップのAPI確認だけを行います。本課題の実学習にはGPUを使ってください。
+学習中の描画は省き、物理・固定歩行モデル・観測・報酬・MAPPOをGPUで計算します。
+段階の検証も独立したGPU環境で行い、最後に通常のCPU MuJoCoで別途評価します。
+T4の所要時間は後のCSVで実測します。ローカルGPUの時間をColabの実測として扱いません。
 
 1チームステップは全機のいる世界を1回進めることです。`NUM_ENVS` はロボット台数ではなく並列世界数です。
-`TRAINING_STEPS` は `NUM_ENVS * HORIZON` の倍数で指定します。256ステップへの縮小はAPI接続確認用です。
+`TRAINING_STEPS` は `NUM_ENVS * HORIZON` の倍数で指定します。小さい予算はAPI接続確認用です。
+まずbaselineだけを試す場合は `conditions = {"baseline": baseline_config}` とします。
 結果を混ぜないよう、新しい実験名で始めます。保存補助はコード・資産・実行環境の記録だけを担当します。
 """,
     ),
@@ -281,14 +309,14 @@ GPUで学んだ方策が通常のGym環境でも動くかを確認します。T4
         "code",
         r"""from hexapod_transport_rl.experiments import create_experiment
 
-EXPERIMENT_NAME = "pose_reward_trial_01"
+EXPERIMENT_NAME = "curriculum_reward_trial_01"
 TRAINING_SEED = 20261010
 import torch
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-NUM_ENVS = 64 if DEVICE.type == "cuda" else 2
-HORIZON = 16 if DEVICE.type == "cuda" else 128
-TRAINING_STEPS = 131072 if DEVICE.type == "cuda" else 65536
+NUM_ENVS = 256 if DEVICE.type == "cuda" else 2
+HORIZON = 64 if DEVICE.type == "cuda" else 128
+TRAINING_STEPS = 3145728 if DEVICE.type == "cuda" else 1024
 
 RUN_DIR = create_experiment(PROJECT_DIR, EXPERIMENT_NAME)
 print("1条件あたりの収集量:", TRAINING_STEPS, "チームステップ")
@@ -296,28 +324,8 @@ print("1条件あたりの収集量:", TRAINING_STEPS, "チームステップ")
     ),
     (
         "markdown",
-        r"""## 7. 参考モデルを再生し、TorchRLで自分の方策を学ぶ
-まず、この課題で学習した同梱モデルを再生します。これは**今回の実行の結果ではありません**。
-参考モデルの重みや動画の行動は、自分の学習へ渡しません。
-ここでは成功した配置を説明用に選んでいます。成功率は後の共通テストで調べます。
-""",
-    ),
-    (
-        "code",
-        r"""from hexapod_transport_rl import evaluate_pose
-import imageio.v3 as iio
-
-REFERENCE = PROJECT_DIR / "checkpoints/pose_transport.pt"
-evaluate_pose(
-    REFERENCE, episodes=1, seed=87004, workers=1,
-    output=RUN_DIR / "reference.json", video_dir=RUN_DIR / "reference_video",
-)
-media.show_video(iio.imread(next((RUN_DIR / "reference_video").glob("*.mp4"))), fps=5)
-""",
-    ),
-    (
-        "markdown",
-        r"""### 経験を収集し、MAPPOで更新する
+        r"""## 7. TorchRLで回り込みと運搬を学ぶ
+### 経験を収集し、MAPPOで更新する
 `TorchRLTransportEnv` は先ほどのGymnasium環境と同じ課題をTorchRLへ接続します。
 `backend="auto"` はCUDAがあればWarp、なければCPUを選びます。
 機体・T・DCモーター・歩行モデル・報酬式は共通ですが、GPUの物理演算はfloat32で、CPUの軌跡と完全には一致しません。
@@ -328,8 +336,12 @@ media.show_video(iio.imread(next((RUN_DIR / "reference_video").glob("*.mp4"))), 
 下のループは **収集 → GAE → ミニバッチ更新 → 記録** の順です。
 `ReplayBuffer` は今回の経験を混ぜてミニバッチにするために使い、毎ロールアウト空にします。
 時間切れでは最終観測の価値を使い、成功・転倒では使いません。終了した世界だけCollectorがresetします。
-`anneal_exploration()` は更新を終えてから、次の収集で使うノイズの上限を徐々に下げます。
-正規化行動の標準偏差の上限は約0.37から0.05になります。行動の平均は常にactorが学びます。
+各軸の指令候補を `[-1, -0.5, -0.25, 0, 0.25, 0.5, 1]` とし、actorが各候補の確率を学びます。
+例えばT基準のX指令は `[-0.20, -0.10, -0.05, 0, 0.05, 0.10, 0.20]` m/sです。
+学習中はその確率で選び、評価時は各軸で最も確率が高い指令を選びます。
+停止も明示的な選択肢です。反対方向の指令を平均して、小さすぎる指令で止まることを避けます。
+確率の偏りはMAPPOとentropy項で学習し、探索ノイズの段階別調整は不要です。
+この候補は状態によらない行動空間で、回り込みや押す順番のルールは含みません。
 `PoseCurriculum` は検証・難度の変更・ログだけを行い、行動を作ったりPPO更新を代行したりしません。
 `DEVICE` は学習先です。actor・critic・GAE・損失計算をGPUへ置きます。
 Collectorも `envs.device` で方策を実行・収集し、WarpではGPU内で経験を受け渡します。
@@ -346,13 +358,14 @@ from torchrl.collectors import Collector
 from torchrl.data import ReplayBuffer, LazyTensorStorage, SamplerWithoutReplacement
 from hexapod_transport_rl import (
     TorchRLTransportEnv, MAPPOSettings, make_mappo_networks, make_mappo_loss,
-    PoseCurriculum, save_mappo, anneal_exploration,
+    PoseCurriculum, save_mappo,
 )
 
 settings = MAPPOSettings(
-    learning_rate=3e-4, minibatch_size=256 if DEVICE.type == "cuda" else 128, value_normalization=True,
-    entropy_coeff=0.001, final_log_std=-3.0,
+    learning_rate=3e-4, minibatch_size=512 if DEVICE.type == "cuda" else 128, value_normalization=True,
+    entropy_coeff=0.005, gamma=0.995, gae_lambda=0.99,
 )
+ACTION_GRID = (-1, -0.5, -0.25, 0, 0.25, 0.5, 1)
 print("学習先:", DEVICE)
 FRAMES_PER_BATCH = NUM_ENVS * HORIZON
 models = {}
@@ -362,7 +375,9 @@ for name, config in conditions.items():
     envs = TorchRLTransportEnv(config=config, num_envs=NUM_ENVS, backend="auto")
     print(name, "物理計算:", envs.backend, envs.device)
     envs.set_seed(TRAINING_SEED)
-    actor, critic = make_mappo_networks(num_robots=envs.num_robots, obs_dim=envs.obs_dim)
+    actor, critic = make_mappo_networks(num_robots=envs.num_robots, obs_dim=envs.obs_dim,
+        action_grid=ACTION_GRID,
+    )
     actor.to(DEVICE)
     critic.to(DEVICE)
     loss = make_mappo_loss(actor, critic, settings)
@@ -398,10 +413,8 @@ for name, config in conditions.items():
                 objective.backward()
                 torch.nn.utils.clip_grad_norm_(loss.parameters(), settings.max_grad_norm)
                 optimizer.step()
-        progress = (curriculum.transitions + batch.numel()) / TRAINING_STEPS
-        anneal_exploration(actor, settings, progress)
-        collector.update_policy_weights_()
         curriculum.record(batch, metrics)
+        collector.update_policy_weights_()
         if curriculum.rollouts % 50 == 0:
             save_mappo(
                 output / "checkpoints" / f"step_{curriculum.transitions}.pt", actor, critic, optimizer,
@@ -421,7 +434,7 @@ for name, config in conditions.items():
         "markdown",
         r"""### 保存した方策から行動を決める
 `load_mappo()` で自分のactorを読み、`policy_action(actor, observation)` で行動を決めます。
-評価は探索の乱数を加えず `tanh(loc)` を使います。ルールの移動指令を混ぜません。
+評価は探索の乱数を加えず、各軸で確率が最も高い指令を使います。ルールの移動指令を混ぜません。
 """,
     ),
     (
@@ -463,7 +476,7 @@ for name in conditions:
         "markdown",
         r"""## 8. 未使用の初期配置でルールベースと比較する
 同じ学習量の**最後のモデル**を評価し、テスト結果を見てモデルを選び直しません。
-テストは全条件に共通のseed・最終精度・制限12秒を使います。学習で最終段階へ進めなかったモデルも同じ条件です。
+テストは全条件に共通のseed・最終精度・制限40秒を使います。学習で最終段階へ進めなかったモデルも同じ条件です。
 
 比較対象は、一定速度で前進して位置が近くなったら止まる `forward` と、
 位置・角度の誤差から左右の速度を調整する比例制御 `feedback` です。
@@ -476,8 +489,10 @@ for name in conditions:
     ),
     (
         "code",
-        r"""EVALUATION_EPISODES = 12
-TEST_SEED = 84000
+        r"""from hexapod_transport_rl import evaluate_pose
+
+EVALUATION_EPISODES = 12
+TEST_SEED = 88000
 
 reports = {}
 for name, checkpoint in models.items():
@@ -535,7 +550,9 @@ plt.show()
     ),
     (
         "code",
-        r"""videos = []
+        r"""import imageio.v3 as iio
+
+videos = []
 video_names = []
 video_models = {"before_training": RUN_DIR / "baseline/initial.pt", **models}
 for name, checkpoint in video_models.items():
@@ -554,7 +571,7 @@ for policy in ("forward", "feedback"):
     )
     videos.append(iio.imread(next(video_dir.glob("*.mp4"))))
     video_names.append(policy)
-media.show_videos(videos, fps=5, titles=video_names)
+media.show_videos(videos, fps=25, titles=video_names, columns=2)
 """,
     ),
     (
@@ -568,7 +585,8 @@ media.show_videos(videos, fps=5, titles=video_names)
 成功率だけでなく、最終精度・接触・転倒・成功時の時間と、動画で見えた動きを説明します。
 ルールが良い結果になった場合も、学習方策の利点が出なかった条件として報告してください。
 次の実験では、報酬・初期角度・質量・摩擦などを1つずつ変更し、未使用条件での性能を調べます。
-大きな回り込みや4台での運搬は追加課題です。この2台の結果から性能を保証することはできません。
+今回の開始配置で回り込みが学べたかを軌跡と動画で確認してください。
+4台での運搬は `baseline_config` の `num_robots=4` で新しく学習し、2台とは別に評価します。
 
 [教材ガイド](https://github.com/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/docs/colab-guide.md)に設定・再開方法があります。
 """,

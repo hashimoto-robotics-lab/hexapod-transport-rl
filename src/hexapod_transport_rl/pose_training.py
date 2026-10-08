@@ -11,7 +11,7 @@ import numpy as np
 import torch
 import torchrl
 
-from .pose_push import POSE_STAGES, PosePushConfig, make_pose_vector
+from .pose_push import POSE_STAGES, PosePushConfig, PoseStage, make_pose_vector
 from .torchrl_mappo import MAPPOSettings, policy_action
 
 
@@ -29,10 +29,11 @@ class PoseCurriculum:
         settings,
         horizon,
         stages=POSE_STAGES,
-        validate_every=25,
-        minimum_rollouts=25,
+        validate_every=8,
+        minimum_rollouts=8,
         validation_episodes=6,
         advance_threshold=0.5,
+        exploration_rollouts=None,
         resume=None,
     ):
         if settings.gamma != config.shaping_discount:
@@ -82,7 +83,20 @@ class PoseCurriculum:
             advance_threshold=advance_threshold,
             validation_seed_start=62000,
             validation_seed_stride=1000,
+            validation_backend=env.backend,
         )
+        if settings.fixed_exploration:
+            self.training["exploration_schedule"] = dict(
+                mode="external", learn_std=False
+            )
+        if exploration_rollouts is not None:
+            if exploration_rollouts < 1:
+                raise ValueError("Exploration interval must be positive")
+            self.training["exploration_schedule"] = dict(
+                mode="stage",
+                anneal_rollouts=exploration_rollouts,
+                restart_on_advance=True,
+            )
         if env.backend == "warp":
             import mujoco_warp
             import warp
@@ -99,7 +113,11 @@ class PoseCurriculum:
             if (
                 PosePushConfig.from_checkpoint(resume["pose_config"]) != config
                 or MAPPOSettings(**resume["training"]["settings"]) != settings
-                or resume["training"]["curriculum"] != self.training["curriculum"]
+                or [
+                    asdict(PoseStage(**stage))
+                    for stage in resume["training"]["curriculum"]
+                ]
+                != self.training["curriculum"]
                 or resume["training"]["advance_threshold"] != advance_threshold
             ):
                 raise ValueError(
@@ -128,6 +146,8 @@ class PoseCurriculum:
         )
 
     def _validate(self):
+        if self.env.backend == "warp":
+            return self._validate_warp()
         # Validation advances CPU physics step by step; copy current weights once.
         actor = (
             deepcopy(self.actor).cpu()
@@ -159,13 +179,68 @@ class PoseCurriculum:
                     obs, _ = self.validation_env.reset(options={"reset_mask": done})
         return float(np.mean(successes))
 
+    @torch.inference_mode()
+    def _validate_warp(self):
+        """Use the same native reset seeds, with independent GPU validation worlds."""
+        from tensordict import TensorDict
+
+        from .torchrl_env import TorchRLTransportEnv
+
+        if self.validation_env is None:
+            self.validation_env = TorchRLTransportEnv(
+                self.config,
+                num_envs=self.validation_episodes,
+                asset_root=self.env.provenance["asset_root"],
+                backend="warp",
+                device=self.env.device,
+            )
+        worlds = self.validation_env.worlds
+        stage = self.stages[self.level]
+        worlds.call("set_stage", stage)
+        worlds.reset()
+        reference = worlds.reference
+        reference.set_stage(stage)
+        for lane in range(self.validation_episodes):
+            reference.reset(seed=62000 + self.level * 1000 + lane)
+            core = reference.core
+            for key in ("qpos", "qvel"):
+                getattr(worlds.physics, key)[lane].copy_(
+                    torch.as_tensor(getattr(core.data, key), device=self.env.device)
+                )
+            worlds.goal[lane].copy_(torch.as_tensor(core.goal, device=self.env.device))
+            worlds.goal_yaw[lane] = core.goal_yaw
+        worlds.physics.forward()
+        finished = torch.zeros(
+            self.validation_episodes, dtype=torch.bool, device=self.env.device
+        )
+        successes = torch.zeros_like(finished)
+        for _ in range(round(self.config.episode_seconds / self.config.dt)):
+            td = TensorDict(
+                {"agents": {"observation": worlds.observe()}},
+                batch_size=[self.validation_episodes],
+                device=self.env.device,
+            )
+            action = self.actor.get_dist(td).deterministic_sample
+            _, _, terminated, truncated, info = worlds.step(action)
+            done = terminated | truncated
+            successes |= info["is_success"] & done & ~finished
+            finished |= done
+            if bool(finished.all()):
+                break
+            if bool(done.any()):
+                worlds.reset(options={"reset_mask": done})
+        worlds.physics.check()
+        return float(successes.float().mean())
+
     def record(self, batch, metrics):
         self.env.check_physics()
         self.rollouts += 1
         self.transitions += batch.numel()
         collected = self.stages[self.level].name
+        validation_rate = self.last_validation_success_rate
         if self.rollouts % self.validate_every == 0:
             self.last_validation_success_rate = self._validate()
+            validation_rate = self.last_validation_success_rate
             if (
                 self.last_validation_success_rate >= self.advance_threshold
                 and self.rollouts - self.phase_start >= self.minimum_rollouts
@@ -174,13 +249,14 @@ class PoseCurriculum:
                 self.level += 1
                 self.phase_start = self.rollouts
                 self.env.set_stage(self.stages[self.level])
+                self.last_validation_success_rate = None
         elapsed = time.monotonic() - self.started
         row = dict(
             rollouts=self.rollouts,
             team_steps=self.transitions,
             stage=collected,
             next_stage=self.stages[self.level].name,
-            validation_success_rate=self.last_validation_success_rate,
+            validation_success_rate=validation_rate,
             elapsed_seconds=elapsed,
             team_steps_per_second=(self.transitions - self.initial_transitions)
             / elapsed,

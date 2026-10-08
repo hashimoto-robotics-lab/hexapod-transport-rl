@@ -30,7 +30,7 @@ media.show_video(frames, fps=5)
 | `gym.make(id, ...)` | 環境を作り、固定した歩行モデルを読み込む |
 | `reset(seed=..., options=...)` | 初期状態を作り、観測と診断情報を返す |
 | `step(action)` | 全機を0.2秒進め、観測・報酬・終了・時間切れ・診断情報を返す |
-| `render()` | `render_mode="rgb_array"` のときRGB画像を返す |
+| `render()` | `rgb_array` はRGB画像、運搬の `rgb_array_list` は前回取得後の実際の25 Hzフレーム列 |
 | `close()` | 使い終わった環境の描画資源を解放する |
 | `action_space` / `observation_space` | 有効な行動・観測の形と範囲 |
 
@@ -74,7 +74,7 @@ Gymnasiumでは全機分の行動をまとめて1つの環境へ渡します。
 from hexapod_transport_rl import PosePushConfig, PoseRewardWeights
 
 config = PosePushConfig(reward_weights=PoseRewardWeights(orientation=3.0))
-env = gym.make("HexapodPosePush-v0", config=config, render_mode="rgb_array")
+env = gym.make("HexapodPosePush-v0", config=config, render_mode="rgb_array_list")
 observation, info = env.reset(seed=42)
 action = np.zeros(env.action_space.shape, dtype=np.float32)
 observation, reward, terminated, truncated, info = env.step(action)
@@ -113,7 +113,12 @@ Tの縦棒長とゴール距離の大きい方に `start_clearance=0.55` mを加
 | 17 | 担当位置の横方向距離の絶対値 | Tの横幅で割る |
 | 18以降 | 相手の相対位置2・相対向きのsin/cos | 他機ごとに4成分 |
 
-行動は各機の`[前後, 左右, 旋回]`、範囲−1〜1です。右側は左右・旋回の符号を反転して実際の機体座標の指令へ戻します。
+行動はT座標系の`[X方向, Y方向, 旋回]`、範囲−1〜1です。
+標準の尺度は `[0.20 m/s, 0.20 m/s, 0.60 rad/s]` です。
+右側はY・旋回の符号を反転し、各機の向きに応じてXYを機体座標へ回して、歩行モデルの指令範囲へ制限します。
+このため、ロボットが旋回しても同じ行動でT基準の同じ方向を指示できます。
+歩行APIの物理単位・機体座標の行動とは区別してください。
+以前の保存モデルは `action_frame="body"` を復元し、元の機体座標で再生します。
 `policy_action(actor, observation)`と`rule_action(core, policy)`は、このAPIに渡す行動を返します。
 共有・座標変換は構造上の工夫であり、学習行動をルールで生成するものではありません。
 
@@ -128,8 +133,11 @@ from hexapod_transport_rl import (
     TorchRLTransportEnv, MAPPOSettings, make_mappo_networks, make_mappo_loss,
 )
 
-envs = TorchRLTransportEnv(config=config, num_envs=64, backend="auto")
-actor, critic = make_mappo_networks(envs.num_robots, envs.obs_dim)
+envs = TorchRLTransportEnv(config=config, num_envs=256, backend="auto")
+actor, critic = make_mappo_networks(
+    envs.num_robots, envs.obs_dim,
+    action_grid=(-1, -0.5, -0.25, 0, 0.25, 0.5, 1),
+)
 loss = make_mappo_loss(actor, critic, MAPPOSettings())
 envs.close()
 ```
@@ -145,8 +153,10 @@ actorは局所観測、criticは全機の観測を使います。報酬はチー
 `PoseCurriculum`は検証・reset段階・ログを管理し、学習経験や行動を与えません。
 `save_mappo()`はpose方策の場合、別の押すcheckpointを必要としません。
 価値正規化を使うときは`loss=loss`も渡し、再開用の統計を保存します。
-`anneal_exploration(actor, settings, progress)`はPPO更新後に呼び、次の収集で使う
-探索ノイズの上限を下げます。`progress`は総学習予算に対する収集済みの割合です。
+教材では`action_grid`を指定し、各軸の7候補から速度指令を選びます。
+学習中はactorの確率に従って選び、`policy_action()`は各軸で確率最大の候補を返します。停止も候補に含みます。
+`velocity_distribution.py`はこの行動の確率・entropyを定義し、状態から指令を作る制御則は含みません。
+`action_grid`を省略すると既存の連続行動（TanhNormal）になります。旧モデルは元の分布を復元します。
 `load_mappo()`は保存した機体数と観測の形を復元し、標準ではCPUへ読み込みます。
 GPUで学習を再開するときは`load_mappo(path, device="cuda")`を使えます。
 `policy_action()`はactorの置かれたCPU/GPUへ観測を送り、Gymnasium用のNumPy行動を返します。
@@ -159,10 +169,10 @@ from hexapod_transport_rl import evaluate_pose
 
 report = evaluate_pose(
     "runs/pose_reward_trial_01/baseline/pose.pt",
-    episodes=20, seed=84000, workers=2, output="runs/evaluation.json",
+    episodes=20, seed=88000, workers=2, output="runs/evaluation.json",
 )
 rule_report = evaluate_pose(
-    config=config, policy="feedback", episodes=20, seed=84000, workers=2,
+    config=config, policy="feedback", episodes=20, seed=88000, workers=2,
     output="runs/feedback.json",
 )
 ```
@@ -170,7 +180,10 @@ rule_report = evaluate_pose(
 `policy="forward"`は前進だけ、`"feedback"`は比例制御です。ルールは評価専用で学習の教師には使いません。
 モデルの標準評価は、学習中の到達段階によらず保存された最終設定を使います。
 比較するときは`config=baseline_config`を全条件へ指定して物理・成功判定を揃えます。
-録画は`video_dir`を指定し、mediapyで5 fpsのMP4を保存します。録画時は逐次評価します。
+録画は`video_dir`を指定し、mediapyで25 fpsのMP4を保存します。録画時は逐次評価します。
+`rgb_array_list` は0.2秒の `step()` 内で歩行制御の各周期に描画し、`render()` が5フレームを返します。
+reset直後は初期状態の1フレームです。補間や複製は行わず、制御・物理計算・評価結果も変えません。
+手動で集める場合は `frames.extend(env.render())`、表示は `media.show_video(frames, fps=25)` です。
 位置・角度・T端の誤差、成功数・接触・転倒を返します。全試行の結果を含め、成功例だけを選んで集計しません。
 
 ## 旧モデルの再生

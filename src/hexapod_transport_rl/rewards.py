@@ -77,14 +77,17 @@ class PoseRewardWeights:
     position: float = 4.0
     position_error: float = 8.0
     orientation: float = 3.0
-    approach: float = 0.2
+    orientation_error: float = 0.0
+    approach: float = 4.0
+    approach_error: float = 1.0
+    push_heading: float = 2.0
     settling: float = 1.0
     command_change: float = 0.01
     time: float = 0.02
     robot_contact: float = 0.5
     body_contact: float = 6.0
-    success: float = 20.0
-    failure: float = -10.0
+    success: float = 50.0
+    failure: float = -500.0
 
     def __post_init__(self):
         if not all(isfinite(value) for value in astuple(self)):

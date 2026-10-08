@@ -6,10 +6,10 @@
 | 順番 | ファイル | 内容 |
 |---|---|---|
 | 1 | `walking_env.py` | 学習済み歩行モデルへの速度指令、Gymnasium API |
-| 2 | `pose_push.py` | Tの目標姿勢・観測・行動の反転・報酬・運搬Gym API |
+| 2 | `pose_push.py` | Tの目標姿勢・観測・T座標の行動・運搬Gym API |
 | 3 | `rewards.py` | `PoseRewardWeights`の変更可能な係数 |
 | 4 | `torchrl_env.py` | Gymの物理環境をTorchRLのTensorDictへ接続 |
-| 5 | `torchrl_mappo.py` | TorchRLのactor・critic・MAPPOLoss・探索量・保存・読み込み |
+| 5 | `torchrl_mappo.py` | TorchRLのactor・critic・MAPPOLoss・保存・読み込み |
 | 6 | `pose_training.py` | 学習とは別の検証、resetの難度変更、CSV記録 |
 | 7 | `pose_evaluation.py` | 最終精度での評価、比較用ルール、MP4録画 |
 
@@ -24,15 +24,17 @@
 |---|---|
 | 報酬係数 | `PoseRewardWeights`とノートブックの`replace()` |
 | 報酬の式 | `pose_rewards.py`の`pose_reward_terms()`（CPU・GPU共通） |
+| 接近コストの形 | `push_approach.py`：Tの外側の距離と食い込みのコスト。行動は作らない |
 | 初期角度・距離・精度 | `PosePushConfig`・`POSE_STAGES` |
 | 観測と左右の座標変換 | `observe_pose()`・`PosePushEnv.step()` |
 | 学習率・更新回数・PPO clip | `MAPPOSettings` |
+| 速度の候補と確率 | notebookの`ACTION_GRID`・`velocity_distribution.py` |
 | 検証と段階移行 | `PoseCurriculum` |
 | 比較する比例制御 | `rule_action()`、評価専用 |
 | Tの等長形状と質量配分 | `model.py`の`_add_cargo()` |
 
-ノートブックの標準は2台、GPUで131,072／CPUで65,536チームステップ／条件です。
-同じ初期重みと学習量で角度の補助報酬の有無を比較します。
+ノートブックの標準は2台、GPUで3,145,728チームステップ／条件です。
+同じ初期重みと学習量で角度のズレが残る時間のコストの有無を比較します。
 物理の外力やデモの行動は与えません。精度に達するまでの学習時間も評価項目です。
 
 ## 共通の物理基盤

@@ -152,5 +152,25 @@ def test_reward_parameters_flow_directly_to_training_and_paired_evaluation():
     assert "LazyTensorStorage(FRAMES_PER_BATCH, device=DEVICE)" in source
     assert "policy_device=envs.device" in source
     assert 'backend="auto"' in source
-    assert "NUM_ENVS = 64" in source
     assert "collector.update_policy_weights_()" in source
+
+
+def test_student_reward_experiment_changes_one_coefficient():
+    from dataclasses import asdict
+
+    from hexapod_transport_rl import PosePushConfig
+
+    notebook = nbformat.read(NOTEBOOK, as_version=4)
+    cell = next(
+        cell.source
+        for cell in notebook.cells
+        if cell.cell_type == "code" and "changed_reward =" in cell.source
+    )
+    namespace = {"PosePushConfig": PosePushConfig}
+    exec(cell, namespace)
+    baseline = asdict(namespace["baseline_reward"])
+    changed = asdict(namespace["changed_reward"])
+    differences = {key for key in baseline if baseline[key] != changed[key]}
+    assert differences == {"orientation_error"}
+    assert baseline["orientation_error"] == 0.0
+    assert changed["orientation_error"] == 4.0

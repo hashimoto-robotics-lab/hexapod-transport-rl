@@ -15,6 +15,7 @@ from hexapod_transport_rl import (
     PoseCurriculum,
     PosePushConfig,
     PosePushEnv,
+    PoseStage,
     PushConfig,
     TorchRLTransportEnv,
     anneal_exploration,
@@ -96,6 +97,11 @@ def test_old_pose_checkpoint_retains_geometry_start_and_horizon():
     cfg = PosePushConfig.from_checkpoint(saved["pose_config"])
     assert cfg.t_geometry == "equal_arms"
     assert cfg.robot_start == "cargo_rear"
+    assert cfg.approach_metric == "euclidean"
+    assert cfg.approach_clearance == 0.16
+    assert cfg.reward_weights.approach_error == cfg.reward_weights.push_heading == 0
+    assert cfg.reward_weights.orientation_error == 0
+    assert cfg.action_frame == "body"
     assert cfg.episode_seconds == 12
     env = PosePushEnv(cfg)
     try:
@@ -109,7 +115,7 @@ def test_old_pose_checkpoint_retains_geometry_start_and_horizon():
 
 def test_pose_gym_api_seed_and_reflected_actions():
     torch.set_num_threads(1)
-    env = PosePushEnv()
+    env = PosePushEnv(PosePushConfig(action_frame="body"))
     try:
         check_env(env, skip_render_check=True)
         obs, info = env.reset(seed=51)
@@ -172,6 +178,123 @@ def test_pose_reward_changes_without_changing_physics():
         second.close()
 
 
+@pytest.mark.parametrize("heading", [0, np.pi / 2, np.pi, -np.pi / 2])
+def test_cargo_frame_actions_are_rotated_into_walking_commands(heading):
+    import mujoco
+
+    from hexapod_transport_rl.config import rotation
+    from hexapod_transport_rl.pose_push import POSE_COMMAND_LIMIT
+
+    env = PosePushEnv()
+    try:
+        env.reset(options={"randomize": False})
+        for q in env.core.root_q:
+            env.core.data.qpos[q + 3 : q + 7] = [
+                np.cos(heading / 2),
+                0,
+                0,
+                np.sin(heading / 2),
+            ]
+        mujoco.mj_forward(env.core.model, env.core.data)
+        action = np.tile([0.2, 0.3, 0.4], (2, 1)).astype(np.float32)
+        _, _, _, _, info = env.step(action)
+        requested = action * POSE_COMMAND_LIMIT
+        requested[0, 1:] *= -1
+        commands = info["commands"].copy()
+        commands[:, :2] = commands[:, :2] @ rotation(heading).T
+        np.testing.assert_allclose(commands, requested, atol=1e-7)
+    finally:
+        env.close()
+
+
+def test_approach_cost_and_push_heading_are_state_rewards():
+    from hexapod_transport_rl import PoseRewardWeights
+
+    config = PosePushConfig(
+        approach_metric="collision_free",
+        robot_start="cargo_rear",
+        reward_weights=PoseRewardWeights(
+            orientation_error=2, approach_error=2, push_heading=3
+        ),
+    )
+    env = PosePushEnv(config)
+    try:
+        env.reset(options={"randomize": False})
+        core = env.core
+        assert core.info()["push_heading_error"] == pytest.approx(0)
+        for q in core.root_q:
+            core.data.qpos[q + 3 : q + 7] = [0, 0, 0, 1]
+        import mujoco
+
+        mujoco.mj_forward(core.model, core.data)
+        assert core.info()["push_heading_error"] == pytest.approx(1)
+        _, _, _, _, info = env.step(np.zeros((2, 3), dtype=np.float32))
+        terms = info["reward_terms"]
+        assert terms["orientation_error"] == pytest.approx(
+            -config.reward_weights.orientation_error
+            * config.dt
+            * info["yaw_error"]
+            / 0.5
+        )
+        assert terms["approach_error"] == pytest.approx(
+            -2 * config.dt * core._mean_approach_distance()
+        )
+        assert terms["push_heading"] == pytest.approx(
+            -3 * config.dt * info["push_heading_error"]
+        )
+    finally:
+        env.close()
+
+
+def test_forward_baseline_keeps_body_direction_at_a_cargo_frame_limit():
+    import mujoco
+
+    from hexapod_transport_rl.pose_evaluation import rule_action
+
+    env = PosePushEnv(
+        PosePushConfig(robot_start="cargo_rear", cargo_command_limits=(0.2, 0.1, 0.6))
+    )
+    try:
+        env.reset(options={"randomize": False})
+        for q in env.core.root_q:
+            env.core.data.qpos[q + 3 : q + 7] = [2**-0.5, 0, 0, 2**-0.5]
+        mujoco.mj_forward(env.core.model, env.core.data)
+        action = rule_action(env.core, "forward")
+        assert env.action_space.contains(action)
+        env.step(action)
+        np.testing.assert_allclose(env.core.last_commands, [[0.1, 0, 0]] * 2, atol=1e-7)
+    finally:
+        env.close()
+
+
+def test_smooth_rendering_keeps_physics_and_records_actual_control_ticks():
+    plain = PosePushEnv()
+    recorded = PosePushEnv(render_mode="rgb_array_list")
+    times = []
+
+    def capture():
+        times.append(recorded.core.data.time)
+        return np.zeros((2, 2, 3), dtype=np.uint8)
+
+    recorded._render_rgb = capture
+    try:
+        plain.reset(seed=44)
+        recorded.reset(seed=44)
+        assert len(recorded.render()) == 1
+        action = np.full((2, 3), 0.2, np.float32)
+        a, b = plain.step(action), recorded.step(action)
+        np.testing.assert_array_equal(a[0], b[0])
+        assert a[1:4] == b[1:4]
+        np.testing.assert_array_equal(plain.core.data.qpos, recorded.core.data.qpos)
+        assert len(recorded.render()) == 5
+        assert recorded.render() == []
+        assert recorded.metadata["render_fps"] == 25
+        np.testing.assert_allclose(times, np.arange(6) * 0.04, atol=1e-12)
+    finally:
+        plain.close()
+        recorded.close()
+
+
 def test_pose_stage_changes_only_next_reset():
     env = PosePushEnv()
     try:
@@ -184,6 +307,33 @@ def test_pose_stage_changes_only_next_reset():
         env.reset(seed=1)
         assert env.config.position_tolerance == 0.08
         assert env.config.goal_distance == 0.3
+    finally:
+        env.close()
+
+
+def test_reset_curriculum_mixes_start_states_without_changing_final_task():
+    final = PosePushConfig()
+    mixed = PoseStage("mixed", 0.3, 15, 0.08, np.deg2rad(8), 0.6, 0.5)
+    env = PosePushEnv(final)
+    try:
+        env.set_stage(mixed)
+        starts = []
+        for seed in range(20):
+            env.reset(seed=seed)
+            core = env.core
+            local = (core.robot_xy - core.cargo_xy) @ np.array(
+                [
+                    [np.cos(core.cargo_yaw), -np.sin(core.cargo_yaw)],
+                    [np.sin(core.cargo_yaw), np.cos(core.cargo_yaw)],
+                ]
+            )
+            starts.append(bool((local[:, 0] < 0).all()))
+        assert 5 <= sum(starts) <= 15
+        env.set_stage(POSE_STAGES[-1])
+        env.reset(seed=4)
+        assert env.config.rear_start_fraction == 0
+        direction = env.core.goal / np.linalg.norm(env.core.goal)
+        assert (env.core.robot_xy @ direction > 1.7).all()
     finally:
         env.close()
 
@@ -269,6 +419,9 @@ def test_real_pose_update_save_relocation_and_four_robot_loading(tmp_path, devic
         np.testing.assert_array_equal(before_annealing, policy_action(actor, obs))
         scales = [m.log_std for m in actor.modules() if hasattr(m, "log_std")]
         assert len(scales) == 1 and scales[0].max() <= -2.25
+        anneal_exploration(actor, settings, 0, restart=True)
+        assert torch.all(scales[0] == settings.initial_log_std)
+        np.testing.assert_array_equal(before_annealing, policy_action(actor, obs))
         collector.update_policy_weights_()
         np.testing.assert_allclose(
             policy_action(collector.policy, obs),

@@ -15,6 +15,8 @@ from hexapod_transport_rl import (
     PoseCurriculum,
     PosePushConfig,
     PosePushEnv,
+    PoseRewardWeights,
+    PoseStage,
     TorchRLTransportEnv,
     load_mappo,
     make_mappo_loss,
@@ -25,6 +27,51 @@ from hexapod_transport_rl import (
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available(), reason="NVIDIA CUDA is required for MuJoCo Warp"
 )
+
+
+def test_gpu_validation_preserves_training_physics_and_uses_native_seeds(tmp_path):
+    pytest.importorskip("mujoco_warp")
+    torch.set_num_threads(1)
+    cfg = PosePushConfig(
+        goal_distance=0.001,
+        min_yaw_degrees=0,
+        max_yaw_degrees=0,
+        episode_seconds=0.4,
+        success_hold_seconds=0.2,
+    )
+    env = TorchRLTransportEnv(cfg, num_envs=2, backend="warp")
+    actor, _ = make_mappo_networks(2, 22)
+    actor.cuda()
+    with torch.no_grad():
+        for parameter in actor.parameters():
+            parameter.zero_()
+    stage = PoseStage("test", 0.001, 0, 0.08, cfg.yaw_tolerance, 0.2)
+    curriculum = PoseCurriculum(
+        cfg,
+        env,
+        actor,
+        tmp_path,
+        seed=41,
+        settings=MAPPOSettings(),
+        horizon=2,
+        stages=(stage,),
+        validation_episodes=2,
+    )
+    try:
+        env.worlds.step(torch.zeros(2, 2, 3, device="cuda"))
+        qpos, qvel = env.worlds.physics.qpos.clone(), env.worlds.physics.qvel.clone()
+        memory = env.worlds.physics.previous_action.clone()
+        assert curriculum._validate() == 1.0
+        assert curriculum._validate() == 1.0
+        torch.testing.assert_close(env.worlds.physics.qpos, qpos, atol=0, rtol=0)
+        torch.testing.assert_close(env.worlds.physics.qvel, qvel, atol=0, rtol=0)
+        torch.testing.assert_close(
+            env.worlds.physics.previous_action, memory, atol=0, rtol=0
+        )
+        assert curriculum.training["validation_backend"] == "warp"
+    finally:
+        curriculum.close()
+        env.close()
 
 
 @pytest.fixture
@@ -85,8 +132,59 @@ def test_goal_side_gpu_reset_matches_cpu_and_stays_beyond_goal(num_robots):
         native.close()
 
 
+@pytest.mark.parametrize("num_robots", [2, 3, 4])
+def test_angle_curriculum_gpu_reset_matches_native(num_robots):
+    pytest.importorskip("mujoco_warp")
+    torch.set_num_threads(1)
+    config = PosePushConfig(num_robots=num_robots)
+    env = TorchRLTransportEnv(config, num_envs=2, backend="warp")
+    native = PosePushEnv(config)
+    try:
+        for angle in (0, 45, 90, 135, 180):
+            stage = replace(POSE_STAGES[0], start_angle_degrees=angle)
+            env.worlds.call("set_stage", stage)
+            native.set_stage(stage)
+            env.worlds.reset(options={"randomize": False})
+            native.reset(options={"randomize": False})
+            np.testing.assert_allclose(
+                env.worlds.physics.qpos[0].cpu(), native.core.data.qpos, atol=1e-6
+            )
+            np.testing.assert_allclose(
+                env.worlds.observe()[0].cpu(), native.core.observe(), atol=2e-6
+            )
+            positions = native.core.robot_xy
+            separation = np.linalg.norm(
+                positions[:, None] - positions[None, :], axis=-1
+            )
+            separation[np.eye(num_robots, dtype=bool)] = np.inf
+            assert separation.min() >= 0.65 - 1e-6
+            if angle == 180:
+                assert np.all(native.core.robot_xy[:, 0] > 1.7)
+            if angle == 0:
+                np.testing.assert_allclose(native.core.robot_xy[:, 0], -0.4)
+        env.worlds.physics.check()
+    finally:
+        env.close()
+        native.close()
+
+
 def test_gpu_observation_and_reward_match_native_formulas(worlds):
-    native = PosePushEnv()
+    config = replace(
+        worlds.config,
+        approach_metric="collision_free",
+        reward_weights=PoseRewardWeights(
+            orientation_error=2, approach_error=2, push_heading=3
+        ),
+    )
+    worlds.config = config
+    worlds.pending_config = replace(config, robot_start="cargo_rear")
+    worlds.reset(options={"randomize": False})
+    for q in worlds.reference.core.root_q:
+        worlds.physics.qpos[:, q + 3 : q + 7] = torch.tensor(
+            [0, 0, 0, 1], device="cuda"
+        )
+    worlds.physics.forward()
+    native = PosePushEnv(config)
     before = worlds.measurements()
     before = {key: value.clone() for key, value in before.items()}
     action = torch.tensor([0.7, -0.2, 0.3], device="cuda").expand(4, 2, 3)
@@ -95,6 +193,9 @@ def test_gpu_observation_and_reward_match_native_formulas(worlds):
         copy_lane(worlds, native, lane)
         np.testing.assert_allclose(
             observation[lane].cpu(), native.core.observe(), atol=2e-6, rtol=2e-6
+        )
+        assert float(after["push_heading_error"][lane]) == pytest.approx(
+            native.core.info()["push_heading_error"], abs=2e-6
         )
         contacts = worlds.physics.contacts
         native.core.contacts.part_contact_counts = (

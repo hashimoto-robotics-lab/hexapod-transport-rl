@@ -16,7 +16,8 @@ def prepare_colab(project_dir: str | Path) -> None:
     ):
         subprocess.run(["apt-get", "update", "-qq"], check=True)
         subprocess.run(
-            ["apt-get", "install", "-y", "-qq", "libosmesa6", "libgl1"], check=True
+            ["apt-get", "install", "-y", "-qq", "libosmesa6", "libgl1", "libegl1"],
+            check=True,
         )
     if shutil.which("uv") is None:
         subprocess.run(
@@ -38,7 +39,11 @@ def prepare_colab(project_dir: str | Path) -> None:
         ],
         check=True,
     )
-    backend = os.environ.get("HEXAPOD_RENDER_BACKEND", "osmesa")
+    import torch
+
+    backend = os.environ.get(
+        "HEXAPOD_RENDER_BACKEND", "egl" if torch.cuda.is_available() else "osmesa"
+    )
     os.environ.update(
         MUJOCO_GL=backend,
         PYOPENGL_PLATFORM=backend,
@@ -50,7 +55,6 @@ def prepare_colab(project_dir: str | Path) -> None:
     importlib.invalidate_caches()
     import imageio_ffmpeg
     import mediapy as media
-    import torch
 
     torch.set_num_threads(1)
     media.set_ffmpeg(imageio_ffmpeg.get_ffmpeg_exe())

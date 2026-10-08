@@ -28,7 +28,10 @@ class HexapodPushEnv(gym.Env):
 
     core_type = PushEnv
 
-    metadata = {"render_modes": ["rgb_array", "human"], "render_fps": 5}
+    metadata = {
+        "render_modes": ["rgb_array", "rgb_array_list", "human"],
+        "render_fps": 5,
+    }
 
     def __init__(
         self,
@@ -65,7 +68,17 @@ class HexapodPushEnv(gym.Env):
         self.width, self.height = width, height
         self.metadata = {
             **self.metadata,
-            "render_fps": max(1, round(1 / self.config.dt)),
+            "render_fps": max(
+                1,
+                round(
+                    (
+                        self.config.high_level_decimation
+                        if render_mode == "rgb_array_list"
+                        else 1
+                    )
+                    / self.config.dt
+                ),
+            ),
         }
         obs_shape = (
             (self.core.state_dim,) if flatten else (self.num_robots, self.core.obs_dim)
@@ -81,6 +94,7 @@ class HexapodPushEnv(gym.Env):
         self._renderer = None
         self._viewer = None
         self._episode_return = 0.0
+        self._frames = []
 
     @property
     def provenance(self) -> Info:
@@ -150,6 +164,9 @@ class HexapodPushEnv(gym.Env):
         obs, info = self.core.reset(randomize=randomize)
         self._has_reset = True
         self._episode_return = 0.0
+        self._frames.clear()
+        if self.render_mode == "rgb_array_list":
+            self._record_frame()
         if self.render_mode == "human":
             self.render()
         return self._format_observation(obs), self._episode_info(info)
@@ -165,7 +182,10 @@ class HexapodPushEnv(gym.Env):
                 f"Action must be finite, in [-1,1], with shape {self.action_space.shape}"
             )
         obs, reward, terminated, truncated, info = self.core.step(
-            action.reshape(self.num_robots, 3)
+            action.reshape(self.num_robots, 3),
+            on_control_step=self._record_frame
+            if self.render_mode == "rgb_array_list"
+            else None,
         )
         self._episode_return += reward
         if self.render_mode == "human":
@@ -193,14 +213,20 @@ class HexapodPushEnv(gym.Env):
         )
         camera.azimuth, camera.elevation = 135, -50
 
-    def render(self) -> np.ndarray | None:
-        """Render in the constructor-selected mode; RGB frames are uint8 (H,W,3)."""
+    def render(self) -> np.ndarray | list[np.ndarray] | None:
+        """RGB frame, or actual 25 Hz frames collected since the last render call."""
         self._require_ready()
         if self.render_mode == "human":
             self._render_human()
         elif self.render_mode == "rgb_array":
             return self._render_rgb()
+        elif self.render_mode == "rgb_array_list":
+            frames, self._frames = self._frames, []
+            return frames
         return None
+
+    def _record_frame(self):
+        self._frames.append(self._render_rgb())
 
     def _render_human(self) -> None:
         if self._viewer is None:
@@ -240,6 +266,7 @@ class HexapodPushEnv(gym.Env):
             self._renderer.close()
             self._renderer = None
         self._closed = True
+        self._frames.clear()
 
 
 if GYM_ENV_ID not in gym.registry:

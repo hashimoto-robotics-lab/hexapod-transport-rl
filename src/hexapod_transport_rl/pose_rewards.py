@@ -40,7 +40,15 @@ def pose_reward_terms(
         position=weights.position * delta["distance"],
         position_error=-weights.position_error * config.dt * after["distance"] / 0.5,
         orientation=weights.orientation * delta["yaw_error"],
+        orientation_error=-weights.orientation_error
+        * config.dt
+        * after["yaw_error"]
+        / 0.5,
         approach=weights.approach * delta["approach"],
+        approach_error=-weights.approach_error * config.dt * after["approach"],
+        push_heading=-weights.push_heading
+        * config.dt
+        * after.get("push_heading_error", 0.0),
         settling=-weights.settling * config.dt * near * motion,
         command_change=-weights.command_change
         * (((commands - previous_commands) / command_limits) ** 2).mean(axis=(-2, -1)),

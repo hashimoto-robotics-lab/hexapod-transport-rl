@@ -1,7 +1,7 @@
 """Real TorchRL MAPPO updates and tests of the MARL/time-limit semantics."""
 
 import json
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +18,7 @@ from hexapod_transport_rl import (
     ApproachCurriculum,
     ApproachRewardWeights,
     MAPPOSettings,
+    PosePushConfig,
     PushConfig,
     TorchRLTransportEnv,
     evaluate_transport,
@@ -64,8 +65,9 @@ def test_actor_is_local_and_shared_with_a_central_critic():
     assert observation.grad[1].abs().sum() > 0
 
 
-def test_mappo_clips_each_robot_ratio_instead_of_the_joint_ratio():
-    actor, critic = make_mappo_networks()
+@pytest.mark.parametrize("grid", [None, (-1, -0.5, 0, 0.5, 1)])
+def test_mappo_clips_each_robot_ratio_instead_of_the_joint_ratio(grid):
+    actor, critic = make_mappo_networks(action_grid=grid)
     loss = make_mappo_loss(actor, critic, MAPPOSettings())
     assert isinstance(loss, MAPPOLoss)
     loss.normalize_advantage = False
@@ -84,6 +86,103 @@ def test_mappo_clips_each_robot_ratio_instead_of_the_joint_ratio():
     metrics = loss(batch)
     assert float(metrics["loss_objective"].detach()) == pytest.approx(-1.1, abs=1e-6)
     assert float(metrics["clip_fraction"]) == pytest.approx(0.5)
+
+
+def test_fixed_exploration_updates_the_mean_without_learning_the_noise():
+    torch.manual_seed(42)
+    settings = MAPPOSettings(fixed_exploration=True, initial_log_std=-0.3)
+    actor, critic = make_mappo_networks(initial_log_std=settings.initial_log_std)
+    loss = make_mappo_loss(actor, critic, settings)
+    observation = torch.randn(16, 2, 10)
+    with torch.no_grad():
+        batch = actor(
+            TensorDict({"agents": {"observation": observation}}, batch_size=[16])
+        )
+    batch["agents", "advantage"] = torch.randn(16, 2, 1)
+    batch["agents", "value_target"] = torch.randn(16, 2, 1)
+    before = policy_action(actor, observation)
+    scale = next(p for name, p in actor.named_parameters() if name.endswith("log_std"))
+    noise_before = scale.detach().clone()
+    metrics = loss(batch)
+    objective = (
+        metrics["loss_objective"] + metrics["loss_critic"] + metrics["loss_entropy"]
+    )
+    optimizer = torch.optim.Adam(loss.parameters(), lr=settings.learning_rate)
+    optimizer.zero_grad()
+    objective.backward()
+    optimizer.step()
+    assert scale.grad is None
+    torch.testing.assert_close(scale, noise_before)
+    assert not np.array_equal(before, policy_action(actor, observation))
+
+
+@pytest.mark.parametrize("num_robots", [2, 4])
+@pytest.mark.parametrize("backend", ["cpu", "warp"])
+def test_velocity_choices_train_and_reload_as_exact_commands(
+    tmp_path, num_robots, backend
+):
+    if backend == "warp":
+        if not torch.cuda.is_available():
+            pytest.skip("NVIDIA CUDA is required for MuJoCo Warp")
+        pytest.importorskip("mujoco_warp")
+    grid = (-1, -0.5, -0.25, 0, 0.25, 0.5, 1)
+    config = PosePushConfig(num_robots=num_robots, episode_seconds=0.4)
+    env = TorchRLTransportEnv(config, num_envs=2, asynchronous=False, backend=backend)
+    actor, critic = make_mappo_networks(num_robots, env.obs_dim, action_grid=grid)
+    actor.to(env.device)
+    critic.to(env.device)
+    settings = MAPPOSettings(value_normalization=True)
+    loss = make_mappo_loss(actor, critic, settings).to(env.device)
+    optimizer = torch.optim.Adam(loss.parameters(), lr=settings.learning_rate)
+    collector = Collector(
+        env,
+        actor,
+        frames_per_batch=8,
+        total_frames=8,
+        auto_register_policy_transforms=True,
+        policy_device=env.device,
+    )
+    batch = next(iter(collector))
+    assert all(float(v) in grid for v in batch["agents", "action"].unique())
+    assert batch["agents", "sample_log_prob"].shape == (2, 4, num_robots)
+    loss.value_estimator(batch)
+    metrics = loss(batch.reshape(-1))
+    objective = (
+        metrics["loss_objective"] + metrics["loss_critic"] + metrics["loss_entropy"]
+    )
+    optimizer.zero_grad()
+    objective.backward()
+    optimizer.step()
+    observation = batch["agents", "observation"][0, 0].cpu().numpy()
+    before = policy_action(actor, observation)
+    path = save_mappo(
+        tmp_path / "choices.pt",
+        actor,
+        critic,
+        optimizer,
+        config=config,
+        provenance=env.provenance,
+        training={"settings": asdict(settings)},
+        curriculum={},
+        loss=loss,
+    )
+    loaded, _, metadata = load_mappo(path)
+    assert metadata["network"]["action_grid"] == list(grid)
+    np.testing.assert_array_equal(before, policy_action(loaded, observation))
+    collector.shutdown()
+
+
+def test_velocity_choice_mode_does_not_average_opposite_movements_into_a_stop():
+    from hexapod_transport_rl.velocity_distribution import VelocityDistribution
+
+    logits = torch.tensor([4.0, -10.0, 4.0] * 3)
+    distribution = VelocityDistribution(logits, grid=(-1, 0, 1))
+    torch.testing.assert_close(distribution.mean, torch.zeros(3))
+    assert distribution.deterministic_sample.abs().min() == 1
+    uniform = VelocityDistribution(torch.zeros(9), grid=(-1, 0, 1))
+    assert float(uniform.entropy()) == pytest.approx(3 * np.log(3))
+    assert float(uniform.log_prob(torch.zeros(3))) == pytest.approx(-3 * np.log(3))
+    assert uniform.log_prob(torch.tensor([0.1, 0.0, 0.0])).isneginf()
 
 
 def test_time_limit_uses_the_final_observation_and_team_reward_broadcast():

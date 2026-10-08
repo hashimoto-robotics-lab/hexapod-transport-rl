@@ -28,6 +28,7 @@ from .approach import ApproachConfig
 from .config import PushConfig
 from .mappo import load_checkpoint
 from .pose_push import PosePushConfig
+from .velocity_distribution import VelocityDistribution
 
 FORMAT = "hexapod-approach-torchrl-mappo-v1"
 POSE_FORMAT = "hexapod-pose-push-torchrl-mappo-v1"
@@ -63,6 +64,7 @@ class MAPPOSettings:
     initial_log_std: float = -1.0
     value_normalization: bool = False
     final_log_std: float | None = None
+    fixed_exploration: bool = False
 
     def __post_init__(self):
         if not np.isfinite(self.initial_log_std):
@@ -93,6 +95,9 @@ def make_mappo_loss(
     actor, critic, settings: MAPPOSettings, *, value_normalizer_state=None
 ):
     """Configure TorchRL's MAPPO loss and multi-agent GAE, without reimplementing them."""
+    for module in actor.modules():
+        if isinstance(module, SharedScale):
+            module.log_std.requires_grad_(not settings.fixed_exploration)
     loss = MAPPOLoss(
         actor,
         critic,
@@ -132,10 +137,13 @@ class SharedScale(nn.Module):
 
 
 @torch.no_grad()
-def anneal_exploration(actor, settings: MAPPOSettings, progress: float):
+def anneal_exploration(
+    actor, settings: MAPPOSettings, progress: float, *, restart=False
+):
     """Cap Gaussian noise after PPO updates, before the next collection.
 
-    Progress is the fraction of the fixed training budget already collected.
+    Progress may describe the full budget or the current curriculum stage.
+    Restart reopens exploration at a stage change, preserving learned means.
     The learned mean still supplies every action; no controller is introduced.
     """
     if settings.final_log_std is None:
@@ -146,36 +154,82 @@ def anneal_exploration(actor, settings: MAPPOSettings, progress: float):
     )
     for module in actor.modules():
         if isinstance(module, SharedScale):
+            if restart:
+                module.log_std.fill_(settings.initial_log_std)
             module.log_std.clamp_(max=cap)
 
 
 def make_mappo_networks(
-    num_robots=2, obs_dim=10, *, initial_log_std=NETWORK["initial_log_std"]
+    num_robots=2,
+    obs_dim=10,
+    *,
+    initial_log_std=NETWORK["initial_log_std"],
+    action_grid=None,
 ):
-    """Return TorchRL actor and critic; each robot has three bounded actions."""
+    """Return shared actor and central critic for three normalized commands.
+
+    An action_grid selects velocity candidates with categorical probabilities.
+    Omitting it preserves the continuous Gaussian policy used by older models.
+    """
     actor_mlp = MultiAgentMLP(
         n_agent_inputs=obs_dim,
-        n_agent_outputs=3,
+        n_agent_outputs=3 if action_grid is None else 3 * len(action_grid),
         n_agents=num_robots,
         centralized=False,
         share_params=True,
         num_cells=NETWORK["hidden_units"],
         activation_class=nn.Tanh,
     )
-    actor = ProbabilisticActor(
-        module=TensorDictModule(
+    # Small random output weights and zero biases avoid a directional bias at reset.
+    with torch.no_grad():
+        nn.init.orthogonal_(actor_mlp.params["4", "weight"], gain=0.01)
+        actor_mlp.params["4", "bias"].zero_()
+    if action_grid is None:
+        module = TensorDictModule(
             nn.Sequential(actor_mlp, SharedScale(initial_log_std)),
             in_keys=[("agents", "observation")],
             out_keys=[("agents", "loc"), ("agents", "scale")],
-        ),
-        in_keys=[("agents", "loc"), ("agents", "scale")],
+        )
+        parameters = [("agents", "loc"), ("agents", "scale")]
+        distribution, arguments = (
+            TanhNormal,
+            {"low": -1.0, "high": 1.0, "event_dims": 1},
+        )
+    else:
+        action_grid = tuple(float(value) for value in action_grid)
+        if (
+            len(action_grid) < 3
+            or not np.isfinite(action_grid).all()
+            or min(action_grid) < -1
+            or max(action_grid) > 1
+            or 0 not in action_grid
+            or any(a >= b for a, b in zip(action_grid, action_grid[1:], strict=False))
+        ):
+            raise ValueError(
+                "Velocity choices must be ordered in [-1,1] and include zero"
+            )
+        with torch.no_grad():
+            # A weak stop preference gives a neutral initial mode, with broad sampling.
+            bias = actor_mlp.params["4", "bias"].reshape(3, len(action_grid))
+            bias[:, action_grid.index(0)].fill_(0.05)
+        module = TensorDictModule(
+            actor_mlp,
+            in_keys=[("agents", "observation")],
+            out_keys=[("agents", "logits")],
+        )
+        parameters = [("agents", "logits")]
+        distribution, arguments = VelocityDistribution, {"grid": action_grid}
+    actor = ProbabilisticActor(
+        module=module,
+        in_keys=parameters,
         out_keys=[("agents", "action")],
-        distribution_class=TanhNormal,
-        distribution_kwargs={"low": -1.0, "high": 1.0, "event_dims": 1},
+        distribution_class=distribution,
+        distribution_kwargs=arguments,
         default_interaction_type=ExplorationType.RANDOM,
         return_log_prob=True,
         log_prob_key=("agents", "sample_log_prob"),
     )
+    actor.action_grid = action_grid
     critic = TensorDictModule(
         MultiAgentMLP(
             n_agent_inputs=obs_dim,
@@ -196,8 +250,8 @@ def make_mappo_networks(
 def policy_action(actor, observation) -> np.ndarray:
     """Deterministic normalized (N,3) commands from a Gymnasium observation.
 
-    TanhNormal's deterministic sample is tanh(loc), not its analytic mean.
-    This keeps evaluation actions bounded without adding any navigation rules.
+    Gaussian policies use tanh(loc); velocity-choice policies use the most
+    likely command on each axis. Neither adds navigation or stopping rules.
     """
     td = TensorDict(
         {
@@ -262,7 +316,14 @@ def save_mappo(
     saved = dict(
         format=file_format,
         torchrl=torchrl.__version__,
-        network=NETWORK,
+        network={
+            **NETWORK,
+            **(
+                {"action_grid": list(actor.action_grid)}
+                if getattr(actor, "action_grid", None) is not None
+                else {}
+            ),
+        },
         num_robots=num_robots,
         obs_dim=obs_dim,
         actor=actor.state_dict(),
@@ -291,7 +352,12 @@ def load_mappo(path: str | Path, *, device="cpu"):
     """Load TorchRL weights and metadata; historical approach files verify their pusher."""
     path = Path(path).resolve()
     saved = torch.load(path, weights_only=True, map_location="cpu")
-    if saved.get("network") != NETWORK:
+    network = saved.get("network", {})
+    if (
+        not isinstance(network, dict)
+        or {key: value for key, value in network.items() if key != "action_grid"}
+        != NETWORK
+    ):
         raise ValueError("Unrecognized TorchRL network architecture")
     if saved.get("format") == POSE_FORMAT:
         config = PosePushConfig.from_checkpoint(saved["pose_config"])
@@ -308,7 +374,9 @@ def load_mappo(path: str | Path, *, device="cpu"):
         saved["pushing_checkpoint"] = str(pusher)
     else:
         raise ValueError("Unrecognized TorchRL checkpoint format")
-    actor, critic = make_mappo_networks(saved["num_robots"], saved["obs_dim"])
+    actor, critic = make_mappo_networks(
+        saved["num_robots"], saved["obs_dim"], action_grid=network.get("action_grid")
+    )
     actor.load_state_dict(saved["actor"])
     critic.load_state_dict(saved["critic"])
     if any(

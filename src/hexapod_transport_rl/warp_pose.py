@@ -19,6 +19,7 @@ from .env import (
 )
 from .pose_push import PosePushEnv
 from .pose_rewards import pose_reward_terms
+from .push_approach import PushApproachDistance
 from .warp_physics import WarpPhysics
 
 
@@ -47,6 +48,7 @@ class WarpPoseWorlds:
         self.config = self.pending_config = config
         self.num_envs, self.num_robots = num_envs, config.num_robots
         self.device = torch.device(device)
+        self.approach_distance = PushApproachDistance(config, device=self.device)
         self.reference = PosePushEnv(config, asset_root, render_mode="rgb_array")
         self.single_observation_space = self.reference.observation_space
         self.provenance = self.reference.provenance
@@ -60,6 +62,9 @@ class WarpPoseWorlds:
         self.root_q = torch.as_tensor(core.root_q, device=self.device)
         self.root_v = torch.as_tensor(core.root_v, device=self.device)
         self.limits = torch.as_tensor(COMMAND_LIMIT, device=self.device)
+        self.pose_limits = torch.as_tensor(
+            config.cargo_command_limits, device=self.device
+        )
         self.high = torch.as_tensor(COMMAND_HIGH, device=self.device)
         self.low = torch.as_tensor(COMMAND_LOW, device=self.device)
         self.slots = torch.as_tensor(
@@ -152,23 +157,36 @@ class WarpPoseWorlds:
         )
         jitter = random[:, 4:].reshape(self.num_envs, self.num_robots, 3) * 2 - 1
         spawn_heading = heading
-        spawn_distance = cfg.rear_face - cfg.push_gap - 0.10
-        if cfg.robot_start == "goal_side":
-            spawn_heading = heading + torch.atan2(
-                lateral, torch.full_like(lateral, cfg.goal_distance)
+        rear = torch.full_like(
+            heading,
+            cfg.robot_start == "cargo_rear" or cfg.rear_start_fraction == 1,
+            dtype=torch.bool,
+        )
+        if cfg.robot_start == "goal_side" and 0 < cfg.rear_start_fraction < 1:
+            rear = (
+                torch.rand(self.num_envs, device=self.device, generator=self.generator)
+                < cfg.rear_start_fraction
+                if randomized
+                else torch.full_like(rear, cfg.rear_start_fraction >= 0.5)
             )
-            spawn_distance = cfg.start_distance
+        if cfg.robot_start == "goal_side":
+            direction = heading + torch.atan2(
+                lateral, torch.full_like(lateral, cfg.goal_distance)
+            ) * (cfg.start_angle_degrees / 180)
+            spawn_heading = torch.where(rear, heading, direction)
         for robot in range(self.num_robots):
             q = int(self.reference.core.root_q[robot])
+            front_x, front_y, front_yaw = cfg.start_pose(cfg.slots[robot])
+            rear_x, rear_y, rear_yaw = cfg.start_pose(cfg.slots[robot], rear=True)
             local = torch.stack(
                 (
-                    torch.full_like(heading, spawn_distance),
-                    self.slots[robot].expand_as(heading),
+                    torch.where(rear, rear_x, front_x),
+                    torch.where(rear, rear_y, front_y),
                 ),
                 -1,
             )
             xy = cargo_coordinates(local, -spawn_heading)
-            yaw = spawn_heading + (torch.pi if cfg.robot_start == "goal_side" else 0)
+            yaw = spawn_heading + torch.where(rear, rear_yaw, front_yaw)
             if randomized:
                 xy = xy + jitter[:, robot, :2] * cfg.position_jitter
                 yaw = yaw + jitter[:, robot, 2] * cfg.yaw_jitter
@@ -226,6 +244,15 @@ class WarpPoseWorlds:
         cargo_velocity = cargo_coordinates(
             p.qvel[:, self.cargo_v : self.cargo_v + 2], yaw
         )
+        last_commands = self.last_commands
+        if self.config.action_frame == "cargo":
+            last_commands = torch.cat(
+                (
+                    cargo_coordinates(last_commands[..., :2], -headings),
+                    last_commands[..., 2:],
+                ),
+                -1,
+            )
         rows = []
         for i in range(self.num_robots):
             side = self.signs[i, 1]
@@ -244,7 +271,7 @@ class WarpPoseWorlds:
                     )
                     * self.signs[i]
                     / self.limits,
-                    self.last_commands[:, i] * self.signs[i] / self.limits,
+                    last_commands[:, i] * self.signs[i] / self.limits,
                     goal_xy * self.signs[i, :2],
                     torch.stack((goal_yaw.sin() * side, goal_yaw.cos()), -1),
                     torch.cat((cargo_velocity, p.qvel[:, self.cargo_v + 5, None]), -1)
@@ -275,7 +302,7 @@ class WarpPoseWorlds:
         return torch.stack(rows, 1)
 
     def measurements(self):
-        cargo_xy, yaw, positions, _ = self.coordinates()
+        cargo_xy, yaw, positions, headings = self.coordinates()
         desired = torch.stack(
             (
                 torch.full_like(
@@ -286,9 +313,16 @@ class WarpPoseWorlds:
             -1,
         )
         return dict(
+            push_heading_error=(
+                (-positions[..., 0] / 0.4).clamp(0, 1) * (1 - headings.cos()) / 2
+            ).mean(-1),
             distance=torch.linalg.vector_norm(self.goal - cargo_xy, dim=-1),
             yaw_error=wrap_angle(self.goal_yaw - yaw).abs(),
-            approach=torch.linalg.vector_norm(positions - desired, dim=-1).mean(-1),
+            approach=(
+                self.approach_distance(positions).mean(-1)
+                if self.config.approach_metric == "collision_free"
+                else torch.linalg.vector_norm(positions - desired, dim=-1).mean(-1)
+            ),
             cargo_speed=torch.linalg.vector_norm(
                 self.physics.qvel[:, self.cargo_v : self.cargo_v + 2], dim=-1
             ),
@@ -349,7 +383,15 @@ class WarpPoseWorlds:
     @torch.no_grad()
     def step(self, action):
         action = action.clamp(-1, 1) * self.signs
-        commands = action * torch.where(action >= 0, self.high, -self.low)
+        if self.config.action_frame == "cargo":
+            requested = action * self.pose_limits
+            headings = self.coordinates()[3]
+            commands = torch.cat(
+                (cargo_coordinates(requested[..., :2], headings), requested[..., 2:]),
+                -1,
+            ).clamp(self.low, self.high)
+        else:
+            commands = action * torch.where(action >= 0, self.high, -self.low)
         before = self.measurements()
         self.physics.step(commands)
         self.steps.add_(1)

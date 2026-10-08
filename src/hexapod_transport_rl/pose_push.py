@@ -15,13 +15,22 @@ import torch
 from gymnasium import spaces
 
 from .api import HexapodPushEnv
-from .config import COMMAND_LIMIT, STAND_HEIGHT, PushConfig, rotation, wrap
+from .config import (
+    COMMAND_LIMIT,
+    STAND_HEIGHT,
+    PushConfig,
+    command_to_action,
+    rotation,
+    wrap,
+)
 from .contacts import BODY
 from .env import PushEnv
 from .pose_rewards import pose_reward_terms
+from .push_approach import PushApproachDistance
 from .rewards import PoseRewardWeights
 
 POSE_ENV_ID = "HexapodPosePush-v0"
+POSE_COMMAND_LIMIT = (0.20, 0.20, 0.60)
 
 
 @dataclass(frozen=True)
@@ -42,10 +51,26 @@ class PosePushConfig(PushConfig):
     yaw_jitter: float = 0.12
     robot_start: str = "goal_side"
     start_clearance: float = 0.55
+    rear_start_fraction: float = 0.0
+    start_angle_degrees: float = 180.0
+    approach_metric: str = "collision_free"
+    approach_clearance: float = 0.4
+    approach_penetration_cost: float = 10.0
+    action_frame: str = "cargo"
+    cargo_command_limits: tuple[float, float, float] = POSE_COMMAND_LIMIT
     shaping_discount: float = 0.99
     reward_weights: PoseRewardWeights = field(default_factory=PoseRewardWeights)
 
     def __post_init__(self):
+        object.__setattr__(
+            self, "cargo_command_limits", tuple(self.cargo_command_limits)
+        )
+        if (
+            len(self.cargo_command_limits) != 3
+            or not np.isfinite(self.cargo_command_limits).all()
+            or min(self.cargo_command_limits) <= 0
+        ):
+            raise ValueError("Three positive finite cargo command limits are required")
         if isinstance(self.reward_weights, dict):
             object.__setattr__(
                 self, "reward_weights", PoseRewardWeights(**self.reward_weights)
@@ -55,6 +80,21 @@ class PosePushConfig(PushConfig):
             raise ValueError("Pose pushing uses a T with a centerline-junction origin")
         if self.robot_start not in ("goal_side", "cargo_rear"):
             raise ValueError("robot_start must be goal_side or cargo_rear")
+        if self.approach_metric not in ("euclidean", "collision_free"):
+            raise ValueError("Unknown approach distance metric")
+        if self.action_frame not in ("body", "cargo"):
+            raise ValueError("action_frame must be body or cargo")
+        if not np.isfinite(self.approach_clearance) or self.approach_clearance <= 0:
+            raise ValueError("approach_clearance must be positive and finite")
+        if (
+            not np.isfinite(self.approach_penetration_cost)
+            or self.approach_penetration_cost < 1
+        ):
+            raise ValueError("approach_penetration_cost must be at least one")
+        if not 0 <= self.rear_start_fraction <= 1:
+            raise ValueError("rear_start_fraction must be in [0,1]")
+        if not 0 <= self.start_angle_degrees <= 180:
+            raise ValueError("start_angle_degrees must be in [0,180]")
         if not np.isfinite(self.start_clearance) or self.start_clearance <= 0:
             raise ValueError("start_clearance must be positive and finite")
         values = (
@@ -78,10 +118,52 @@ class PosePushConfig(PushConfig):
         """Robot-center distance along cargo-to-goal direction at reset."""
         return max(self.t_stem_length, self.goal_distance) + self.start_clearance
 
+    def start_pose(self, slot, *, rear=False):
+        """Local XY and heading for a reset; 180 degrees is the final goal side."""
+        if rear or self.robot_start == "cargo_rear":
+            return self.rear_face - self.push_gap - 0.10, slot, 0.0
+        if self.start_angle_degrees == 180:
+            return self.start_distance, slot, np.pi
+        angle = radians(self.start_angle_degrees)
+        radius = 0.4 + (self.start_distance - 0.4) * self.start_angle_degrees / 180
+        side = 1 if slot >= 0 else -1
+        inner_slot = min(abs(peer) for peer in self.slots if (peer >= 0) == (slot >= 0))
+        # Preserve spacing within each side when there are three or four robots.
+        lateral = (
+            radius * np.sin(angle)
+            + inner_slot * abs(np.cos(angle))
+            + abs(slot)
+            - inner_slot
+        )
+        return (
+            -radius * np.cos(angle),
+            side * lateral,
+            -side * angle,
+        )
+
     @classmethod
     def from_checkpoint(cls, saved: dict):
         """Keep the geometry and near-cargo starts of older pose checkpoints."""
-        return cls(**{"t_geometry": "equal_arms", "robot_start": "cargo_rear", **saved})
+        saved = dict(saved)
+        if "reward_weights" in saved:
+            saved["reward_weights"] = {
+                "approach_error": 0.0,
+                "push_heading": 0.0,
+                "orientation_error": 0.0,
+                **saved["reward_weights"],
+            }
+        return cls(
+            **{
+                "t_geometry": "equal_arms",
+                "robot_start": "cargo_rear",
+                "approach_metric": "euclidean",
+                "approach_clearance": 0.16,
+                "approach_penetration_cost": 1.0,
+                "action_frame": "body",
+                "cargo_command_limits": (0.15, 0.15, 0.60),
+                **saved,
+            }
+        )
 
 
 @dataclass(frozen=True)
@@ -94,8 +176,18 @@ class PoseStage:
     position_tolerance: float
     yaw_tolerance: float
     hold_seconds: float
+    rear_start_fraction: float | None = None
+    start_angle_degrees: float | None = None
 
     def apply(self, config: PosePushConfig):
+        start = {
+            key: value
+            for key, value in (
+                ("rear_start_fraction", self.rear_start_fraction),
+                ("start_angle_degrees", self.start_angle_degrees),
+            )
+            if value is not None
+        }
         return replace(
             config,
             goal_distance=self.distance,
@@ -103,11 +195,17 @@ class PoseStage:
             position_tolerance=self.position_tolerance,
             yaw_tolerance=self.yaw_tolerance,
             success_hold_seconds=self.hold_seconds,
+            **start,
         )
 
 
 POSE_STAGES = (
-    PoseStage("rotate", 0.3, 15.0, 0.08, radians(8), 0.6),
+    *(
+        PoseStage(
+            f"approach_{angle}", 0.3, 15.0, 0.08, radians(8), 0.6, 0.0, float(angle)
+        )
+        for angle in (0, 45, 90, 135, 180)
+    ),
     PoseStage("transport", 0.4, 30.0, 0.08, radians(5), 0.6),
     PoseStage("settle", 0.4, 30.0, 0.08, radians(5), 1.0),
 )
@@ -127,6 +225,10 @@ def observe_pose(core: PushEnv) -> np.ndarray:
     goal_yaw = wrap(core.goal_yaw - core.cargo_yaw)
     cargo_velocity = core.data.qvel[core.cargo_v : core.cargo_v + 2] @ cargo_rotation
     rows = []
+    last_commands = core.last_commands.copy()
+    if core.cfg.action_frame == "cargo":
+        for i, heading in enumerate(headings):
+            last_commands[i, :2] = last_commands[i, :2] @ rotation(heading).T
     for i, slot in enumerate(core.cfg.slots):
         side = 1.0 if slot >= 0 else -1.0
         signs = np.array([1, side, side])
@@ -138,7 +240,7 @@ def observe_pose(core: PushEnv) -> np.ndarray:
                 np.r_[velocity, core.data.qvel[core.root_v[i] + 5]]
                 * signs
                 / COMMAND_LIMIT,
-                core.last_commands[i] * signs / COMMAND_LIMIT,
+                last_commands[i] * signs / COMMAND_LIMIT,
                 goal_xy * [1, side],
                 [np.sin(goal_yaw) * side, np.cos(goal_yaw)],
                 np.r_[cargo_velocity, core.data.qvel[core.cargo_v + 5]]
@@ -162,6 +264,17 @@ def observe_pose(core: PushEnv) -> np.ndarray:
 
 class PosePhysics(PushEnv):
     """Same articulated dynamics; reset and rewards describe target-pose pushing."""
+
+    def __init__(self, cfg=None, asset_root=None):
+        cfg = cfg or PosePushConfig()
+        self.approach_distance = PushApproachDistance(cfg)
+        super().__init__(cfg, asset_root)
+
+    def _mean_approach_distance(self):
+        if self.cfg.approach_metric == "euclidean":
+            return super()._mean_approach_distance()
+        positions = (self.robot_xy - self.cargo_xy) @ rotation(self.cargo_yaw)
+        return float(self.approach_distance(positions).mean())
 
     def _reset_cargo_and_goal(self, randomize):
         heading = self.rng.uniform(-np.pi, np.pi) if randomize else 0.0
@@ -197,36 +310,46 @@ class PosePhysics(PushEnv):
         return heading
 
     def _reset_robot_poses(self, cargo_heading, randomize):
-        if self.cfg.robot_start == "cargo_rear":
-            super()._reset_robot_poses(cargo_heading, False)
-            heading = cargo_heading
-        else:
-            direction = np.arctan2(self.goal[1], self.goal[0])
-            heading = direction + np.pi
-            for i, q in enumerate(self.root_q):
-                xy = rotation(direction) @ [self.cfg.start_distance, self.cfg.slots[i]]
-                self.data.qpos[q : q + 7] = (
-                    *xy,
-                    STAND_HEIGHT,
-                    np.cos(heading / 2),
-                    0,
-                    0,
-                    np.sin(heading / 2),
-                )
-        for q in self.root_q:
-            yaw = heading
+        rear = self.cfg.robot_start == "cargo_rear" or self.cfg.rear_start_fraction == 1
+        if self.cfg.robot_start == "goal_side" and 0 < self.cfg.rear_start_fraction < 1:
+            rear = (
+                self.rng.random() < self.cfg.rear_start_fraction
+                if randomize
+                else self.cfg.rear_start_fraction >= 0.5
+            )
+        direction = cargo_heading if rear else np.arctan2(self.goal[1], self.goal[0])
+        if not rear and self.cfg.start_angle_degrees != 180:
+            direction = (
+                cargo_heading
+                + wrap(direction - cargo_heading) * self.cfg.start_angle_degrees / 180
+            )
+        for slot, q in zip(self.cfg.slots, self.root_q, strict=True):
+            x, y, heading = self.cfg.start_pose(slot, rear=rear)
+            xy = rotation(direction) @ [x, y]
+            yaw = direction + heading
             if randomize:
-                self.data.qpos[q : q + 2] += self.rng.uniform(
+                xy += self.rng.uniform(
                     -self.cfg.position_jitter, self.cfg.position_jitter, 2
                 )
                 yaw += self.rng.uniform(-self.cfg.yaw_jitter, self.cfg.yaw_jitter)
-            self.data.qpos[q + 3 : q + 7] = (np.cos(yaw / 2), 0, 0, np.sin(yaw / 2))
+            self.data.qpos[q : q + 7] = (
+                *xy,
+                STAND_HEIGHT,
+                np.cos(yaw / 2),
+                0,
+                0,
+                np.sin(yaw / 2),
+            )
 
     def observe(self):
         return observe_pose(self)
 
     def info(self):
         info = super().info()
+        positions = (self.robot_xy - self.cargo_xy) @ rotation(self.cargo_yaw)
+        headings = wrap(self.yaw(self.base_ids) - self.cargo_yaw)
+        behind = np.clip(-positions[:, 0] / 0.4, 0, 1)
+        info["push_heading_error"] = float((behind * (1 - np.cos(headings)) / 2).mean())
         info.update(
             cargo_speed=float(
                 np.linalg.norm(self.data.qvel[self.cargo_v : self.cargo_v + 2])
@@ -316,6 +439,14 @@ class PosePushEnv(HexapodPushEnv):
         physical = action.copy()
         sides = np.where(self.config.slots >= 0, 1, -1)
         physical[:, 1:] *= sides[:, None]
+        if self.config.action_frame == "cargo":
+            commands = physical * np.asarray(
+                self.config.cargo_command_limits, dtype=np.float32
+            )
+            headings = wrap(self.core.yaw(self.core.base_ids) - self.core.cargo_yaw)
+            for i, heading in enumerate(headings):
+                commands[i, :2] = commands[i, :2] @ rotation(heading)
+            physical = command_to_action(commands)
         return super().step(physical)
 
 
