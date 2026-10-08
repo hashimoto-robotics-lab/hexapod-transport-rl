@@ -151,6 +151,8 @@ Collectorの `env_device`・`policy_device`・`storing_device` は `envs.device`
 `envs.check_physics()` は収集後のバッファ不足・非有限値検査、`envs.render(world=0)` は実際のGPU状態のRGB描画です。
 actorは局所観測、criticは全機の観測を使います。報酬はチームで共有し、PPOの確率比は機体別です。
 `PoseCurriculum`は検証・reset段階・ログを管理し、学習経験や行動を与えません。
+`stages=(POSE_STAGES[-1],), validate_every=None`で最終課題を固定し、追加学習の記録だけに使えます。
+`initial_checkpoint=path`は初期モデルのSHA256と事前学習量を記録します。重みの読み込みや更新は呼び出し側で行います。
 `save_mappo()`はpose方策の場合、別の押すcheckpointを必要としません。
 価値正規化を使うときは`loss=loss`も渡し、再開用の統計を保存します。
 教材では`action_grid`を指定し、各軸の7候補から速度指令を選びます。
@@ -184,7 +186,14 @@ rule_report = evaluate_pose(
 `rgb_array_list` は0.2秒の `step()` 内で歩行制御の各周期に描画し、`render()` が5フレームを返します。
 reset直後は初期状態の1フレームです。補間や複製は行わず、制御・物理計算・評価結果も変えません。
 手動で集める場合は `frames.extend(env.render())`、表示は `media.show_video(frames, fps=25)` です。
-位置・角度・T端の誤差、成功数・接触・転倒を返します。全試行の結果を含め、成功例だけを選んで集計しません。
+`backend="warp"`は学習方策をGPUで並列評価します。初期配置はCPUと同じseedで作り、
+最初の終了時点で各試行の集計を止めます。録画・ルールは`backend="cpu"`（標準）を使います。
+
+位置・角度・T端の誤差、成功数・接触・転倒を返します。
+`position_error_integral_m_s`と`yaw_error_integral_rad_s`は、各0.2秒ステップ末の誤差を時間積分した値です。
+成功・失敗の終了までを積算し、成功後の状態を含めません。早期失敗で値が小さくなる場合があるので転倒・成功率も併記します。
+`time_to_success_or_limit_s`は成功時の経過時間、失敗時は制限時間です。全試行を含む比較に使います。
+`evaluation_seconds`はモデル読み込み・環境作成・コンパイル・評価を含む実時間です。全試行の結果を含め、成功例だけを選んで集計しません。
 
 ## 旧モデルの再生
 

@@ -1,6 +1,7 @@
 """Validate, change future reset difficulty and log pose learning; no PPO loop."""
 
 import csv
+import hashlib
 import json
 import time
 from copy import deepcopy
@@ -34,11 +35,14 @@ class PoseCurriculum:
         validation_episodes=6,
         advance_threshold=0.5,
         exploration_rollouts=None,
+        initial_checkpoint=None,
         resume=None,
     ):
         if settings.gamma != config.shaping_discount:
             raise ValueError("Potential shaping discount must match MAPPO gamma")
-        if min(validate_every, minimum_rollouts, validation_episodes, horizon) < 1:
+        if min(minimum_rollouts, validation_episodes, horizon) < 1 or (
+            validate_every is not None and validate_every < 1
+        ):
             raise ValueError("Validation intervals must be positive")
         if not 0 < advance_threshold <= 1:
             raise ValueError("Advance threshold must be in (0,1]")
@@ -46,6 +50,8 @@ class PoseCurriculum:
         self.stages = tuple(stages)
         if not self.stages:
             raise ValueError("At least one pose stage is required")
+        if validate_every is None and len(self.stages) != 1:
+            raise ValueError("Disabling validation requires one fixed task stage")
         self.output = Path(output)
         self.output.mkdir(parents=True, exist_ok=True)
         if (self.output / "run.json").exists():
@@ -85,6 +91,17 @@ class PoseCurriculum:
             validation_seed_stride=1000,
             validation_backend=env.backend,
         )
+        if initial_checkpoint is not None:
+            path = Path(initial_checkpoint)
+            parent = torch.load(path, map_location="cpu", weights_only=False)
+            self.training["initialization"] = dict(
+                mode="reward_adaptation",
+                checkpoint=str(path.resolve()),
+                sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                parent_team_steps=parent["curriculum"]["transitions"],
+                optimizer_inherited=False,
+                demonstration_actions_used=False,
+            )
         if settings.fixed_exploration:
             self.training["exploration_schedule"] = dict(
                 mode="external", learn_std=False
@@ -238,7 +255,7 @@ class PoseCurriculum:
         self.transitions += batch.numel()
         collected = self.stages[self.level].name
         validation_rate = self.last_validation_success_rate
-        if self.rollouts % self.validate_every == 0:
+        if self.validate_every is not None and self.rollouts % self.validate_every == 0:
             self.last_validation_success_rate = self._validate()
             validation_rate = self.last_validation_success_rate
             if (

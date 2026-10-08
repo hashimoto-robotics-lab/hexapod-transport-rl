@@ -1,0 +1,86 @@
+{
+  "cpu_tests": {
+    "passed": 108,
+    "skipped": 19,
+    "seconds": 154.03
+  },
+  "gpu_evaluation_semantics": {
+    "passed": 1,
+    "seconds": 9.1,
+    "cases": "16 matched native/GPU initial states; early successes and timeouts; accumulation stops at each lane termination"
+  },
+  "notebook_execution": {
+    "verification": "All research/API code cells; installation excluded; learning reduced to 1 real GPU MAPPO rollout per condition; evaluation on nonreserved seeds 99000..99001; not evidence of learning performance",
+    "timing": [
+      {
+        "cell": 5,
+        "seconds": 4.08207192691043
+      },
+      {
+        "cell": 7,
+        "seconds": 0.7234341569710523
+      },
+      {
+        "cell": 9,
+        "seconds": 10.776770206866786
+      },
+      {
+        "cell": 11,
+        "seconds": 0.9134166720323265
+      },
+      {
+        "cell": 13,
+        "seconds": 0.17563086398877203
+      },
+      {
+        "cell": 15,
+        "seconds": 0.530024932930246
+      },
+      {
+        "cell": 17,
+        "seconds": 55.88265632186085
+      },
+      {
+        "cell": 19,
+        "seconds": 0.07632809178903699
+      },
+      {
+        "cell": 21,
+        "seconds": 0.04364708112552762
+      },
+      {
+        "cell": 23,
+        "seconds": 44.374122308101505
+      },
+      {
+        "cell": 24,
+        "seconds": 0.012146479915827513
+      },
+      {
+        "cell": 26,
+        "seconds": 0.17777273384854198
+      },
+      {
+        "cell": 27,
+        "seconds": 18.882794240955263
+      },
+      {
+        "cell": 29,
+        "seconds": 0.7989035791251808
+      }
+    ],
+    "zip": "/home/hashimoto/2026/10/hexapod_transport_rl/runs/fast_reward_notebook_smoke_20261008_01.zip",
+    "run": "/home/hashimoto/2026/10/hexapod_transport_rl/runs/fast_reward_notebook_smoke_20261008_01"
+  },
+  "maintainer_benchmark": "One real CUDA MAPPO rollout from the common checkpoint; component timing, metadata, checkpoint save completed",
+  "fixed_budget_study": "4 reward combinations * 3 adaptation seeds * 262144 additional team steps; all 12 final checkpoints tested on identical 50 fresh layouts on native CPU and Warp",
+  "initialization_verified": "All 12 actor, critic and value statistics match the common checkpoint exactly; all initial Adam states empty",
+  "figures_and_video": "Comparison figure inspected; paired films 640x480, 25 fps, actual physical states, development seed 91023; no text overlays",
+  "notebooks": "nbformat valid; all code cells compile; main notebook rebuild gives identical SHA256; both notebooks contain 30 cells",
+  "lint": "ruff check and format --check for src, tests and tools; git diff --check passed",
+  "sha256": {
+    "notebooks/hexapod_transport_rl_colab.ipynb": "5bf1b766aac460845c4a003b6ed692b4fd1c604c39ca6fc5503c98b5cb48a355",
+    "notebooks/hexapod_transport_rl_from_scratch.ipynb": "ff4e5bb8687dd7d99b4d7a3603ed55e3c5594c94b38f9f1d2bf18232a6954b94",
+    "docs/results/fast_reward_adaptation_20261008.json": "81b283b49b0a42fa4c8b234f4e52b2b6966b8e24de72241e76d07fe9fb2803df"
+  }
+}

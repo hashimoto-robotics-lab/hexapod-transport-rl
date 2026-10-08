@@ -1,4 +1,4 @@
-"""Build the research notebook from its readable cell definitions."""
+"""Build the student reward-adaptation notebook from readable cell definitions."""
 
 import json
 from pathlib import Path
@@ -18,12 +18,15 @@ CELLS = [
 Tの横棒と縦棒はどちらも1.3 m、太さは0.20 mです。
 最終課題の初期配置は **T → ゴール → ロボット**。ゴール側から約1.85 mの位置でTを向きます。
 制限時間40秒、目標は **位置8 cm・角度5度以内で低速状態を1秒維持** です。
-研究の問い：「角度のズレが残る時間のペナルティを強くすると、回り込み・運搬の精度は改善するか？」
+研究の問い：「速さと胴体接触へのペナルティを組み合わせると、協調運搬はどう変わるか？」
 同じ未使用の配置で比較し、報酬の変更とルールベースとの挙動の違いを調べます。
 
 ## 学習済みロボットへコマンドを送るところから始める
 固定した歩行モデルは、前後・左右・旋回の指令を18関節の目標角度へ変換します。
-このモデルを使って、上位の運搬方策をランダムな重みから新しく学びます。旧運搬モデルや教師デモは使いません。
+上位の運搬方策も、教師デモを使わずMAPPOで学習したものを配布します。
+この教材では**共通のRL学習済みモデルから報酬を変えて追加学習**し、比較にかかる時間を減らします。
+研究対象は「報酬変更後の適応」です。最初からの学習速度・到達性能を示す実験とは区別します。
+ランダムな重みからの再現は別の [新規学習ノートブック](https://github.com/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_from_scratch.ipynb) にあります。
 
 ```text
 T・目標・相手の状態 → MAPPO → 速度指令 → 固定歩行モデル → 脚・床・Tの接触
@@ -158,7 +161,8 @@ media.show_video(frames, fps=5)
         "markdown",
         r"""### 歩行指令を協調させた運搬の例
 左は目標との角度差約17度、右は約28度から、学習したMAPPOが回り込んで押す例です。
-ローカルGPUでランダムな重みから学習した参考動画で、教師データや学生の初期重みには使いません。
+ローカルGPUでランダムな重みから報酬だけで学んだ、共通モデルの動作です。
+このモデルの重みを各条件の初期値へ使います。動画・行動を教師には使いません。
 未使用50配置の評価では44件成功しました。これは1つの学習seedの結果で、4台の性能は未検証です。
 再生は25 fps・実時間です。左の最終誤差は位置4.4 cm・角度1.0度、右は0.8 cm・4.9度です。
 """,
@@ -220,7 +224,7 @@ media.show_video(frames, fps=25)
     ),
     (
         "markdown",
-        r"""## 5. 報酬を理解し、1つだけ変更する
+        r"""## 5. 報酬の項を組み合わせる
 Tの位置・向きと、ロボットが押す位置に近づく程度を評価します。
 距離は0.5 m、角度は0.5 radで割って尺度を揃えます。
 
@@ -250,105 +254,90 @@ Tの位置・向きと、ロボットが押す位置に近づく程度を評価�
 `push_heading` はTの背後で強く働き、前方をTの縦棒の方向へ向ける姿勢を評価します。
 式を研究する場合は `pose_rewards.py` の `pose_reward_terms()` を編集します。
 
-以下では**残る角度のズレの係数 `orientation_error` だけを0から4へ増やす**比較を行います。
-角度の改善量の報酬と成功条件は両条件に残し、「残るズレを強く評価すると、より正確に静止できるか」を調べます。強いペナルティが学習を難しくする可能性も検証します。
-実験前に、どちらが速く正確に学べるか仮説を記録してください。
+まず時間コスト `time` を0.02から0.5、胴体接触コスト `body_contact` を6から60へ変える2×2比較です。
+標準・時間のみ・接触のみ・両方の4条件で、各項の効果と組み合わせの効果を調べます。
+その他の報酬と成功条件は揃えます。報酬を強くしても改善するとは限りません。
+実験前に「時間は短くなるか」「接触は減るか」「成功率を落とさないか」の仮説を記録してください。
+次はこのセルの係数・組み合わせだけを変えて、別の実験名で繰り返します。
 """,
     ),
     (
         "code",
         r"""from dataclasses import replace
-from hexapod_transport_rl import PoseRewardWeights
+from hexapod_transport_rl import PoseRewardWeights, load_mappo
 
+COMMON_CHECKPOINT = PROJECT_DIR / "checkpoints/goal_side_pose.pt"
+_, _, common = load_mappo(COMMON_CHECKPOINT)
 baseline_reward = PoseRewardWeights()
-changed_reward = replace(baseline_reward, orientation_error=4.0)
-
-baseline_config = PosePushConfig(num_robots=2, reward_weights=baseline_reward, shaping_discount=0.995)
-changed_config = replace(baseline_config, reward_weights=changed_reward)
-conditions = {"baseline": baseline_config, "more_orientation_cost": changed_config}
+baseline_config = replace(
+    PosePushConfig.from_checkpoint(common["pose_config"]), reward_weights=baseline_reward,
+)
+conditions = {
+    "baseline": baseline_config,
+    "time_cost": replace(baseline_config, reward_weights=replace(baseline_reward, time=0.5)),
+    "body_cost": replace(baseline_config, reward_weights=replace(baseline_reward, body_contact=60.0)),
+    "time_body_cost": replace(baseline_config, reward_weights=replace(baseline_reward, time=0.5, body_contact=60.0)),
+}
 for name, config in conditions.items():
     print(name, config.reward_weights)
 """,
     ),
     (
         "markdown",
-        r"""## 6. 学習と比較実験の条件を揃える
-両条件で同じ初期重み・seed・歩行モデル・物理設定・学習量・MAPPO設定を使います。
-最終課題は **T→ゴール→ロボット**、横棒・縦棒は同じ長さ、制限時間40秒です。
-いきなり難しい配置から始める代わりに、開始位置を45度ずつTの周りで移します。
-**各段階ともMAPPOが行動を決めます。** 教師デモ・旧運搬モデル・Tへの外力は使いません。
+        r"""## 6. 短時間の比較実験を揃える
+4条件は毎回**同じ共通モデル**から始め、同じseed・歩行モデル・物理・追加学習量・MAPPO設定を使います。
+前の条件で学んだ重みを次へ渡しません。actor・critic・価値正規化の統計を読み、新しいAdamで更新します。
+教師デモ、ルールの行動、模倣損失は使いません。追加学習中もMAPPOが指令を選びます。
+すべての条件を最初から最終課題 **T→ゴール→ロボット・40秒・8 cm・5度・低速1秒** で学びます。
+難度の途中変更・段階検証は行わず、収集と更新に時間を使います。
 
-| 段階 | 開始位置 | 目標距離・角度差 | 成功精度（位置・角度・維持時間） |
-|---|---|---|---|
-| approach_0 | Tの背後・近く | 0.3 m・±5〜15度 | 8 cm・8度・0.6秒 |
-| approach_45 / 90 / 135 | 側方から徐々にゴール側へ | 0.3 m・±5〜15度 | 8 cm・8度・0.6秒 |
-| approach_180 | T→ゴール→ロボット | 0.3 m・±5〜15度 | 8 cm・8度・0.6秒 |
-| transport | T→ゴール→ロボット | 0.4 m・±5〜30度 | 8 cm・5度・0.6秒 |
-| settle | T→ゴール→ロボット | 0.4 m・±5〜30度 | 8 cm・5度・1秒 |
+GPUでは1024世界・horizon 64・262,144チームステップ／条件です。
+1回に65,536ステップ、各世界12.8秒分を収集し、4回更新します。`NUM_ENVS` はロボット台数ではありません。
+CPUの設定は接続確認用です。本実験はGPUで行ってください。
+学習中は描画しません。物理・歩行モデル・経験収集・MAPPOをGPU内で計算します。
+GPUカーネルの最初のコンパイル、評価、動画、インストールの時間は学習時間と分けて記録します。
+Colab/T4の所要時間は実際のログで確認します。ローカルGPUの実測をT4の時間とは扱いません。
 
-![開始位置の段階](https://raw.githubusercontent.com/hashimoto-robotics-lab/hexapod-transport-rl/main/docs/figures/goal_side_curriculum.png)
-
-別seedの6配置を8ロールアウトごとに検証します。3/6成功・現在の段階で8ロールアウト以上で進みます。
-変更は次のresetから適用し、検証経験はPPOへ渡しません。最終評価は常に最終課題の配置と精度です。
-両条件で到達段階が違う可能性も、報酬を変えた結果として記録します。
-
-GPUでは256世界・horizon 64・3,145,728チームステップ／条件を使います。
-1回の収集は16,384ステップ、速度指令は5 Hzなので、各世界で12.8秒間を観測してから更新します。
-CPUでは2世界・horizon 128・1,024ステップのAPI確認だけを行います。本課題の実学習にはGPUを使ってください。
-学習中の描画は省き、物理・固定歩行モデル・観測・報酬・MAPPOをGPUで計算します。
-段階の検証も独立したGPU環境で行い、最後に通常のCPU MuJoCoで別途評価します。
-T4の所要時間は後のCSVで実測します。ローカルGPUの時間をColabの実測として扱いません。
-
-1チームステップは全機のいる世界を1回進めることです。`NUM_ENVS` はロボット台数ではなく並列世界数です。
-`TRAINING_STEPS` は `NUM_ENVS * HORIZON` の倍数で指定します。小さい予算はAPI接続確認用です。
-まずbaselineだけを試す場合は `conditions = {"baseline": baseline_config}` とします。
-結果を混ぜないよう、新しい実験名で始めます。保存補助はコード・資産・実行環境の記録だけを担当します。
+標準では1つの追加学習seedです。卒論では `TRAINING_SEED` を3種類以上に変え、実験名も変えて繰り返します。
+共通モデルの事前学習は1 seedなので、この繰り返しは**同じ初期モデルからの適応のばらつき**です。
+最初からの学習を研究する場合は、別ノートブックで初期モデルから独立に3回以上学びます。
+まず2条件で試す場合は `conditions` の辞書を標準と時間コストだけにします。
 """,
     ),
     (
         "code",
-        r"""from hexapod_transport_rl.experiments import create_experiment
+        r"""import torch
+from hexapod_transport_rl.experiments import create_experiment
 
-EXPERIMENT_NAME = "curriculum_reward_trial_01"
-TRAINING_SEED = 20261010
-import torch
-
+EXPERIMENT_NAME = "reward_adaptation_01"
+TRAINING_SEED = 20261020
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-NUM_ENVS = 256 if DEVICE.type == "cuda" else 2
+NUM_ENVS = 1024 if DEVICE.type == "cuda" else 2
 HORIZON = 64 if DEVICE.type == "cuda" else 128
-TRAINING_STEPS = 3145728 if DEVICE.type == "cuda" else 1024
-
+TRAINING_STEPS = 262144 if DEVICE.type == "cuda" else 1024
 RUN_DIR = create_experiment(PROJECT_DIR, EXPERIMENT_NAME)
-print("1条件あたりの収集量:", TRAINING_STEPS, "チームステップ")
+print("追加学習:", TRAINING_STEPS, "チームステップ/条件", "学習先:", DEVICE)
 """,
     ),
     (
         "markdown",
-        r"""## 7. TorchRLで回り込みと運搬を学ぶ
-### 経験を収集し、MAPPOで更新する
-`TorchRLTransportEnv` は先ほどのGymnasium環境と同じ課題をTorchRLへ接続します。
-`backend="auto"` はCUDAがあればWarp、なければCPUを選びます。
-機体・T・DCモーター・歩行モデル・報酬式は共通ですが、GPUの物理演算はfloat32で、CPUの軌跡と完全には一致しません。
-名前付き配列を `TensorDict` にまとめ、観測は `(並列世界, 時間, ロボット, 観測成分)` となります。
-`make_mappo_networks()` は共有actor・中央critic、`make_mappo_loss()` はTorchRLの `MAPPOLoss` とGAEを設定します。
-観測と行動のロボット軸を保って更新します。価値正規化でcriticの更新尺度を揃えます。
+        r"""## 7. TorchRLで報酬変更後の方策を学ぶ
+`TorchRLTransportEnv` はGymと同じ課題をTorchRLへ接続します。CUDAがあればWarp、なければCPUを使います。
+共有actorは各機の観測から指令を決め、中央criticは全機の観測からチームの価値を推定します。
+`load_mappo()` で共通モデルを読み、`make_mappo_loss()` でTorchRLの `MAPPOLoss` とGAEを設定します。
+価値正規化の統計も読みます。Adamは各条件で新しく作ります。
 
-下のループは **収集 → GAE → ミニバッチ更新 → 記録** の順です。
-`ReplayBuffer` は今回の経験を混ぜてミニバッチにするために使い、毎ロールアウト空にします。
-時間切れでは最終観測の価値を使い、成功・転倒では使いません。終了した世界だけCollectorがresetします。
-各軸の指令候補を `[-1, -0.5, -0.25, 0, 0.25, 0.5, 1]` とし、actorが各候補の確率を学びます。
-例えばT基準のX指令は `[-0.20, -0.10, -0.05, 0, 0.05, 0.10, 0.20]` m/sです。
-学習中はその確率で選び、評価時は各軸で最も確率が高い指令を選びます。
-停止も明示的な選択肢です。反対方向の指令を平均して、小さすぎる指令で止まることを避けます。
-確率の偏りはMAPPOとentropy項で学習し、探索ノイズの段階別調整は不要です。
-この候補は状態によらない行動空間で、回り込みや押す順番のルールは含みません。
-`PoseCurriculum` は検証・難度の変更・ログだけを行い、行動を作ったりPPO更新を代行したりしません。
-`DEVICE` は学習先です。actor・critic・GAE・損失計算をGPUへ置きます。
-Collectorも `envs.device` で方策を実行・収集し、WarpではGPU内で経験を受け渡します。
-更新後は `update_policy_weights_()` で、登録済みactorの最新の重みをCollectorへ戻します。
-CPU環境ではCPUで収集してから学習先へ転送します。物理計算の各ステップでCPUとGPUを往復しません。
-接触バッファの不足や非有限値はロールアウトごとにライブラリが確認します。
-保存する `.pt` には重み・optimizer・価値正規化の統計・報酬・到達段階・乱数状態が入ります。別の押すモデルは必要ありません。
+ループは **収集 → GAE → ミニバッチ更新 → 記録** の順です。
+`Collector` が経験を集め、`ReplayBuffer` が今回の経験を混ぜてミニバッチにします。毎回bufferを空にします。
+観測は `(世界, 時間, ロボット, 観測成分)` です。ロボット軸を保ったままMAPPOで更新します。
+時間切れでは最後の観測の価値を使い、成功・転倒では使いません。終了した世界だけresetします。
+
+各軸は停止を含む `[-1, -0.5, -0.25, 0, 0.25, 0.5, 1]` の候補から選びます。
+学習中はactorの確率で探索し、評価時は確率最大の指令を使います。回り込みのルールは含みません。
+`PoseCurriculum` は最終課題を固定し、記録に使います。PPO更新や指令の生成は行いません。
+`update_policy_weights_()` で更新した重みをCollectorへ戻します。
+物理・歩行・観測・報酬・方策・更新はGPU内で実行します。接触容量と非有限値は毎回確認します。
+保存する `.pt` は重み・Adam・価値統計・設定・乱数状態を含み、CPUでも読み込めます。
 """,
     ),
     (
@@ -357,15 +346,14 @@ CPU環境ではCPUで収集してから学習先へ転送します。物理計�
 from torchrl.collectors import Collector
 from torchrl.data import ReplayBuffer, LazyTensorStorage, SamplerWithoutReplacement
 from hexapod_transport_rl import (
-    TorchRLTransportEnv, MAPPOSettings, make_mappo_networks, make_mappo_loss,
-    PoseCurriculum, save_mappo,
+    TorchRLTransportEnv, MAPPOSettings, load_mappo, make_mappo_loss,
+    POSE_STAGES, PoseCurriculum, save_mappo,
 )
 
 settings = MAPPOSettings(
-    learning_rate=3e-4, minibatch_size=512 if DEVICE.type == "cuda" else 128, value_normalization=True,
+    learning_rate=3e-4, minibatch_size=1024 if DEVICE.type == "cuda" else 128, value_normalization=True,
     entropy_coeff=0.005, gamma=0.995, gae_lambda=0.99,
 )
-ACTION_GRID = (-1, -0.5, -0.25, 0, 0.25, 0.5, 1)
 print("学習先:", DEVICE)
 FRAMES_PER_BATCH = NUM_ENVS * HORIZON
 models = {}
@@ -375,16 +363,16 @@ for name, config in conditions.items():
     envs = TorchRLTransportEnv(config=config, num_envs=NUM_ENVS, backend="auto")
     print(name, "物理計算:", envs.backend, envs.device)
     envs.set_seed(TRAINING_SEED)
-    actor, critic = make_mappo_networks(num_robots=envs.num_robots, obs_dim=envs.obs_dim,
-        action_grid=ACTION_GRID,
+    actor, critic, common = load_mappo(COMMON_CHECKPOINT, device=DEVICE)
+    torch.manual_seed(TRAINING_SEED)
+    loss = make_mappo_loss(
+        actor, critic, settings, value_normalizer_state=common["value_normalizer"],
     )
-    actor.to(DEVICE)
-    critic.to(DEVICE)
-    loss = make_mappo_loss(actor, critic, settings)
     optimizer = torch.optim.Adam(loss.parameters(), lr=settings.learning_rate)
     curriculum = PoseCurriculum(
         config=config, env=envs, actor=actor, output=output,
         seed=TRAINING_SEED, settings=settings, horizon=HORIZON,
+        stages=(POSE_STAGES[-1],), validate_every=None, initial_checkpoint=COMMON_CHECKPOINT,
     )
     save_mappo(
         output / "initial.pt", actor, critic, optimizer,
@@ -415,12 +403,6 @@ for name, config in conditions.items():
                 optimizer.step()
         curriculum.record(batch, metrics)
         collector.update_policy_weights_()
-        if curriculum.rollouts % 50 == 0:
-            save_mappo(
-                output / "checkpoints" / f"step_{curriculum.transitions}.pt", actor, critic, optimizer,
-                config=config, provenance=envs.provenance,
-                training=curriculum.training, curriculum=curriculum.state, loss=loss,
-            )
     models[name] = save_mappo(
         output / "pose.pt", actor, critic, optimizer,
         config=config, provenance=envs.provenance,
@@ -453,9 +435,11 @@ env.close()
     ),
     (
         "markdown",
-        r"""### 学習時間と到達段階を確認する
-`progress.csv` に収集量・学習速度・到達段階・損失が残ります。損失は最後のミニバッチの値です。
-速度には段階移行の検証も含まれます。総報酬は報酬式が違う条件間の性能比較には使いません。
+        r"""### 実際の学習時間を確認する
+`progress.csv` に収集量・学習速度・損失を記録します。損失は最後のミニバッチの値です。
+時間は環境の作成・コンパイル後、Collectorの準備から収集・更新・物理確認・記録までです。
+共通モデルの事前学習時間は追加学習時間に含めず、卒論では別に報告します。
+総報酬は、報酬式が違う条件間の性能比較には使いません。
 """,
     ),
     (
@@ -474,17 +458,19 @@ for name in conditions:
     ),
     (
         "markdown",
-        r"""## 8. 未使用の初期配置でルールベースと比較する
-同じ学習量の**最後のモデル**を評価し、テスト結果を見てモデルを選び直しません。
-テストは全条件に共通のseed・最終精度・制限40秒を使います。学習で最終段階へ進めなかったモデルも同じ条件です。
+        r"""## 8. 共通モデルと追加学習後を同じ配置で評価する
+同じ学習量の**最後のモデル**を評価します。初期の共通モデルも同じ配置で評価し、変化を比べます。
+標準は12配置です。これは動作を早く確認するための評価で、卒論では50配置以上・3追加学習seed以上へ増やします。
+モデル選択・係数調整には `91000` からの開発seedを使い、最終テストのseedは先に決めて残してください。
+設定を凍結してから最終テストを行い、その結果でモデルを選び直しません。
+下では開発用seedを使います。成功条件・制限時間・初期配置は共通で、難度を緩めません。
 
-比較対象は、一定速度で前進して位置が近くなったら止まる `forward` と、
-位置・角度の誤差から左右の速度を調整する比例制御 `feedback` です。
-ルールの状態取得条件は学習方策と揃えます。**ルールは評価専用で、学習の教師には使いません。**
-制御器の詳細は `pose_evaluation.py` にあります。ゲインを変更する場合は検証seedで選び、テストseedを残します。
-
-標準は12試行です。卒論では50試行以上、学習seedも少なくとも3種類へ増やし、平均・ばらつきを報告します。
-成功率・最終位置・角度・Tの端の誤差・接触・転倒を比較します。時間は成功例のみで集計します。
+学習方策は `backend="warp"` で全配置を並列評価します。初期状態はCPU MuJoCoと同じseedで作ります。
+GPUではfloat32を使うためCPUと軌跡が異なることがあります。卒論の最終評価は `backend="cpu"` でも確認してください。
+ルールベースの `forward`・`feedback` はCPUで評価します。ルールは評価専用で、教師には使いません。
+成功率・位置・角度・Tの端の誤差・接触・転倒に加え、**位置誤差の時間積分**を比較します。
+例えば0.4 mのズレが10秒続くと約4 m·sです。早く目標へ近づくほど小さくなります。
+失敗を含む所要時間では、失敗を40秒として集計します。成功例だけの平均時間と区別します。
 """,
     ),
     (
@@ -492,13 +478,14 @@ for name in conditions:
         r"""from hexapod_transport_rl import evaluate_pose
 
 EVALUATION_EPISODES = 12
-TEST_SEED = 88000
-
+TEST_SEED = 91000  # 開発用。卒論の最終テストには別の未使用seedを事前に決める。
+EVALUATION_BACKEND = "warp" if DEVICE.type == "cuda" else "cpu"
 reports = {}
-for name, checkpoint in models.items():
+for name, checkpoint in {"common_model": COMMON_CHECKPOINT, **models}.items():
     reports[name] = evaluate_pose(
         checkpoint, config=baseline_config, episodes=EVALUATION_EPISODES,
-        seed=TEST_SEED, workers=2, output=RUN_DIR / "evaluation" / f"{name}.json",
+        seed=TEST_SEED, backend=EVALUATION_BACKEND,
+        output=RUN_DIR / "evaluation" / f"{name}.json",
     )
 for policy in ("forward", "feedback"):
     reports[policy] = evaluate_pose(
@@ -521,6 +508,10 @@ for name, report in reports.items():
         "body_contact_episodes": report["body_contact_episodes"],
         "robot_contact_episodes": report["robot_contact_episodes"], "falls": report["falls"],
         "successful_time_s": np.mean(successful_times) if successful_times else np.nan,
+        "time_including_failures_s": report["mean_time_to_success_or_limit_s"],
+        "position_error_integral_m_s": report["mean_position_error_integral_m_s"],
+        "yaw_error_integral_rad_s": report["mean_yaw_error_integral_rad_s"],
+        "evaluation_seconds": report["evaluation_seconds"],
     })
 comparison = pd.DataFrame(rows)
 comparison.to_csv(RUN_DIR / "comparison.csv", index=False)
@@ -531,7 +522,8 @@ display(comparison)
         "markdown",
         r"""## 9. 図と動画で違いを説明する
 成功率に加え、Tの最終的なズレを比較します。動画は全条件を同じseedから再生します。
-左右の押し方・回転・目標付近の減速・停止を観察してください。失敗例も結果に含めます。
+標準では共通モデルと両方のコストを変えたモデルを同じ配置で再生します。
+左右の押し方・回転・減速・停止を見ます。他の条件は `video_models` の辞書へ追加できます。失敗も数値に含めます。
 """,
     ),
     (
@@ -554,7 +546,7 @@ plt.show()
 
 videos = []
 video_names = []
-video_models = {"before_training": RUN_DIR / "baseline/initial.pt", **models}
+video_models = {"common_model": COMMON_CHECKPOINT, "time_body_cost": models["time_body_cost"]}
 for name, checkpoint in video_models.items():
     video_dir = RUN_DIR / "videos" / name
     evaluate_pose(
@@ -563,32 +555,26 @@ for name, checkpoint in video_models.items():
     )
     videos.append(iio.imread(next(video_dir.glob("*.mp4"))))
     video_names.append(name)
-for policy in ("forward", "feedback"):
-    video_dir = RUN_DIR / "videos" / policy
-    evaluate_pose(
-        config=baseline_config, policy=policy, episodes=1, seed=86000, workers=1,
-        output=RUN_DIR / "video_evaluation" / f"{policy}.json", video_dir=video_dir,
-    )
-    videos.append(iio.imread(next(video_dir.glob("*.mp4"))))
-    video_names.append(policy)
 media.show_videos(videos, fps=25, titles=video_names, columns=2)
 """,
     ),
     (
         "markdown",
-        r"""## 10. 結果を保存し、研究として考察する
-結果フォルダに、実行時のコード・モデル・設定・学習ログ・評価JSON・CSV・図・動画が残ります。
-最後にZIPを作ります。Colabのファイル一覧からダウンロードしてください。
-未保存の結果はランタイムの削除で失われます。長い実験では途中checkpointもDrive等へ保存します。
+        r"""## 10. 卒論の実験へ広げる
+コード・共通モデルのSHA256・報酬・seed・追加学習量・GPU・時間・評価JSON・CSV・図・動画を保存します。
+最後のセルでZIPを作り、Colabのファイル一覧から保存してください。結果はランタイム削除で消えます。
 
-レポートには、変更した報酬と事前の仮説、共通条件、学習量・seed、到達段階を書きます。
-成功率だけでなく、最終精度・接触・転倒・成功時の時間と、動画で見えた動きを説明します。
-ルールが良い結果になった場合も、学習方策の利点が出なかった条件として報告してください。
-次の実験では、報酬・初期角度・質量・摩擦などを1つずつ変更し、未使用条件での性能を調べます。
-今回の開始配置で回り込みが学べたかを軌跡と動画で確認してください。
-4台での運搬は `baseline_config` の `num_robots=4` で新しく学習し、2台とは別に評価します。
+1. 研究の問いと仮説を決める。まず2項の2×2比較で単独効果と組み合わせの効果を調べる。
+2. 開発配置で学習量を決める。262,144→524,288→1,048,576など、同じ予算で全条件を比較する。
+3. 設定を固定し、3種類以上の追加学習seed、50以上の未使用配置で平均・ばらつきを報告する。
+4. 成功率・位置誤差の時間積分・失敗込み時間・接触・転倒を数値と動画で説明する。
 
-[教材ガイド](https://github.com/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/docs/colab-guide.md)に設定・再開方法があります。
+短い追加学習では共通モデルの習慣が残ります。「報酬の効果がない」とは直ちに結論しません。
+成功率が高い初期モデルでは精度の差が小さくなるため、速さ・接触・途中のズレも見ます。
+この実験で言えるのは、**この共通モデル・2台・この物理条件での報酬変更後の適応**です。
+最初からの学習、別質量・摩擦、4台への一般化は別の実験で検証します。2台のモデルを4台へそのまま使いません。
+
+[教材ガイド](https://github.com/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/docs/colab-guide.md)に保存・新規学習の手順があります。
 """,
     ),
     (

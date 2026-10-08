@@ -34,7 +34,7 @@
   },
   "goal_side_pose.pt": {
     "source": "runs/goal_side_velocity_choices_no_angle_20261008_01/baseline/pose.pt",
-    "purpose": "Teacher-free TorchRL MAPPO: equal-bar T, goal-side starts, random actor/critic, seven-stage curriculum, categorical velocity commands; playback reference only, not student initialization",
+    "purpose": "Teacher-free TorchRL MAPPO: equal-bar T, goal-side starts, random actor/critic, seven-stage curriculum, categorical velocity commands; common initialization for short student reward adaptation; videos are illustrations, never demonstrations",
     "sha256": "53f17fe41da3b126576f1c31360132db2eb7d8a7d8bb56e7110af594db92f4ce",
     "team_steps": 3145728,
     "seed": 20261010,

@@ -15,6 +15,7 @@ from hexapod_transport_rl import (
     PoseCurriculum,
     PosePushConfig,
     PosePushEnv,
+    PoseRewardWeights,
     PoseStage,
     PushConfig,
     TorchRLTransportEnv,
@@ -493,3 +494,126 @@ def test_rule_evaluation_uses_same_final_accuracy_and_reset_seeds(tmp_path):
         assert a["initial_distance"] == b["initial_distance"]
         assert a["initial_yaw_error"] == b["initial_yaw_error"]
     assert all(not report["demonstration_actions_used"] for report in reports)
+    for report in reports:
+        for row in report["episodes"]:
+            assert row["position_error_integral_m_s"] == pytest.approx(
+                config.dt * row["distance"]
+            )
+            assert row["yaw_error_integral_rad_s"] == pytest.approx(
+                config.dt * row["yaw_error"]
+            )
+            assert row["time_to_success_or_limit_s"] == config.episode_seconds
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
+def test_parallel_pose_evaluation_matches_native_resets_and_stops_each_lane(tmp_path):
+    """Some lanes succeed early; others time out. Neither may accrue extra costs."""
+    torch.set_num_threads(1)
+    config = PosePushConfig(
+        episode_seconds=0.8,
+        goal_distance=0.04,
+        goal_lateral_range=0.16,
+        min_yaw_degrees=0,
+        max_yaw_degrees=0,
+        success_hold_seconds=0.4,
+    )
+    env = PosePushEnv(config)
+    actor, critic = make_mappo_networks(2, 22, action_grid=(-1, 0, 1))
+    with torch.no_grad():
+        for parameter in actor.parameters():
+            parameter.zero_()
+        for module in actor.modules():
+            if isinstance(module, torch.nn.Linear) and module.out_features == 9:
+                module.bias.reshape(3, 3)[:, 1] = 10
+    optimizer = torch.optim.Adam([*actor.parameters(), *critic.parameters()])
+    path = save_mappo(
+        tmp_path / "stop.pt",
+        actor,
+        critic,
+        optimizer,
+        config=config,
+        provenance=env.provenance,
+        training={},
+        curriculum={},
+    )
+    env.close()
+    native = evaluate_pose(path, config=config, seed=95000, episodes=16, workers=1)
+    gpu = evaluate_pose(path, config=config, seed=95000, episodes=16, backend="warp")
+    assert 0 < native["successes"] < 16
+    for a, b in zip(native["episodes"], gpu["episodes"], strict=True):
+        assert a["seed"] == b["seed"]
+        assert a["initial_distance"] == b["initial_distance"]
+        assert a["success"] == b["success"]
+        assert b["elapsed_seconds"] == pytest.approx(a["elapsed_seconds"], abs=1e-6)
+        assert b["position_error_integral_m_s"] == pytest.approx(
+            a["position_error_integral_m_s"], abs=1e-4
+        )
+        assert b["footprint_error_m"] == pytest.approx(a["footprint_error_m"], abs=1e-4)
+        assert b["time_to_success_or_limit_s"] == pytest.approx(
+            b["elapsed_seconds"] if b["success"] else config.episode_seconds
+        )
+
+
+def test_fixed_task_reward_adaptation_records_common_initializer(tmp_path):
+    """A reward change starts from the common weights, with a new optimizer."""
+    import hashlib
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "checkpoints/goal_side_pose.pt"
+    actor, critic, saved = load_mappo(path)
+    config = replace(
+        PosePushConfig.from_checkpoint(saved["pose_config"]),
+        reward_weights=replace(PoseRewardWeights(), time=0.5),
+    )
+    settings = MAPPOSettings(gamma=config.shaping_discount, value_normalization=True)
+    env = TorchRLTransportEnv(config, num_envs=2, asynchronous=False)
+    loss = make_mappo_loss(
+        actor,
+        critic,
+        settings,
+        value_normalizer_state=saved["value_normalizer"],
+    )
+    optimizer = torch.optim.Adam(loss.parameters(), lr=settings.learning_rate)
+    curriculum = PoseCurriculum(
+        config,
+        env,
+        actor,
+        tmp_path / "adaptation",
+        seed=20,
+        settings=settings,
+        horizon=2,
+        stages=(POSE_STAGES[-1],),
+        validate_every=None,
+        initial_checkpoint=path,
+    )
+    collector = Collector(
+        env,
+        actor,
+        frames_per_batch=4,
+        total_frames=4,
+        auto_register_policy_transforms=True,
+    )
+    try:
+        assert not optimizer.state
+        for key, value in saved["actor"].items():
+            torch.testing.assert_close(actor.state_dict()[key], value)
+        batch = next(iter(collector))
+        loss.value_estimator(batch)
+        metrics = loss(batch.reshape(-1))
+        optimizer.zero_grad()
+        (
+            metrics["loss_objective"] + metrics["loss_critic"] + metrics["loss_entropy"]
+        ).backward()
+        optimizer.step()
+        curriculum.record(batch, metrics)
+        assert optimizer.state and curriculum.validation_env is None
+        assert curriculum.state["stage"] == "settle"
+        assert curriculum.training["validate_every"] is None
+        initial = curriculum.training["initialization"]
+        assert initial["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+        assert initial["parent_team_steps"] == 3145728
+        assert initial["optimizer_inherited"] is False
+        assert initial["demonstration_actions_used"] is False
+    finally:
+        curriculum.close()
+        collector.shutdown()

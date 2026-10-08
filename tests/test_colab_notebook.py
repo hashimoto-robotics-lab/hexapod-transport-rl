@@ -133,11 +133,11 @@ def test_reward_parameters_flow_directly_to_training_and_paired_evaluation():
     assert "config=config" in source
     assert "from torchrl.collectors import Collector" in source
     assert "total_frames=TRAINING_STEPS" in source
-    assert "make_mappo_loss(actor, critic, settings)" in source
+    assert 'value_normalizer_state=common["value_normalizer"]' in source
     assert "buffer.empty()" in source
     assert "save_mappo(" in source
     assert "train_approach(" not in source
-    assert "reward_weights=changed_reward" in source
+    assert "reward_weights=replace(baseline_reward" in source
     assert "seed=TRAINING_SEED" in source
     assert "seed=TEST_SEED" in source
     assert "PoseCurriculum(" in source
@@ -147,7 +147,7 @@ def test_reward_parameters_flow_directly_to_training_and_paired_evaluation():
     assert "comparison.to_csv" in source
     assert "media.show_videos" in source
     assert 'torch.device("cuda" if torch.cuda.is_available() else "cpu")' in source
-    assert "actor.to(DEVICE)" in source and "critic.to(DEVICE)" in source
+    assert "load_mappo(COMMON_CHECKPOINT, device=DEVICE)" in source
     assert "batch = batch.to(DEVICE)" in source
     assert "LazyTensorStorage(FRAMES_PER_BATCH, device=DEVICE)" in source
     assert "policy_device=envs.device" in source
@@ -155,7 +155,7 @@ def test_reward_parameters_flow_directly_to_training_and_paired_evaluation():
     assert "collector.update_policy_weights_()" in source
 
 
-def test_student_reward_experiment_changes_one_coefficient():
+def test_student_reward_experiment_has_two_independent_factors():
     from dataclasses import asdict
 
     from hexapod_transport_rl import PosePushConfig
@@ -164,13 +164,20 @@ def test_student_reward_experiment_changes_one_coefficient():
     cell = next(
         cell.source
         for cell in notebook.cells
-        if cell.cell_type == "code" and "changed_reward =" in cell.source
+        if cell.cell_type == "code" and "baseline_reward =" in cell.source
     )
-    namespace = {"PosePushConfig": PosePushConfig}
+    namespace = {"PosePushConfig": PosePushConfig, "PROJECT_DIR": ROOT}
     exec(cell, namespace)
     baseline = asdict(namespace["baseline_reward"])
-    changed = asdict(namespace["changed_reward"])
-    differences = {key for key in baseline if baseline[key] != changed[key]}
-    assert differences == {"orientation_error"}
-    assert baseline["orientation_error"] == 0.0
-    assert changed["orientation_error"] == 4.0
+    for name, expected in (
+        ("baseline", set()),
+        ("time_cost", {"time"}),
+        ("body_cost", {"body_contact"}),
+        ("time_body_cost", {"time", "body_contact"}),
+    ):
+        config = namespace["conditions"][name]
+        changed = asdict(config.reward_weights)
+        assert {key for key in baseline if baseline[key] != changed[key]} == expected
+        assert config.episode_seconds == 40
+        assert config.robot_start == "goal_side"
+        assert config.num_robots == 2

@@ -5,6 +5,7 @@ policy or contribute actions, trajectories or labels to MAPPO training.
 """
 
 import json
+import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict
 from functools import partial
@@ -102,6 +103,8 @@ def _run_batch(config, checkpoint, policy, seeds, video_dir, asset_root, width, 
             frames = env.render() if video_dir else None
             terminated = truncated = False
             total_reward = 0.0
+            distance_integral = yaw_integral = cargo_path = 0.0
+            previous_xy = np.asarray(initial["cargo_xy"])
             trace = []
             while not (terminated or truncated):
                 action = (
@@ -111,6 +114,13 @@ def _run_batch(config, checkpoint, policy, seeds, video_dir, asset_root, width, 
                 )
                 observation, reward, terminated, truncated, info = env.step(action)
                 total_reward += reward
+                # Physical costs, independent of reward coefficients. Integrate
+                # endpoint errors at the high-level control interval (0.2 s).
+                distance_integral += config.dt * info["distance"]
+                yaw_integral += config.dt * info["yaw_error"]
+                cargo_xy = np.asarray(info["cargo_xy"])
+                cargo_path += float(np.linalg.norm(cargo_xy - previous_xy))
+                previous_xy = cargo_xy
                 for name in impulses:
                     impulses[name] += info[f"{name}_normal_impulse_ns"]
                 robot_contact |= info["robot_collision_fraction"] > 0
@@ -147,6 +157,16 @@ def _run_batch(config, checkpoint, policy, seeds, video_dir, asset_root, width, 
                 initial_distance=initial["distance"],
                 initial_yaw_error=initial["yaw_error"],
                 total_reward=total_reward,
+                position_error_integral_m_s=distance_integral,
+                yaw_error_integral_rad_s=yaw_integral,
+                cargo_path_m=cargo_path,
+                # Fixed-budget time also counts failures; successful-only time
+                # can look better simply because difficult cases stop succeeding.
+                time_to_success_or_limit_s=(
+                    info["elapsed_seconds"]
+                    if info["success"]
+                    else config.episode_seconds
+                ),
                 body_contact=bool(impulses["body"].sum() > 1e-6),
                 robot_contact=bool(robot_contact),
                 total_cargo_normal_impulse_ns={
@@ -185,13 +205,20 @@ def evaluate_pose(
     asset_root=None,
     video_width=640,
     video_height=480,
+    backend="cpu",
 ):
     """Compare controllers on identical unseen seeds, using fixed final tolerances.
 
     With a checkpoint, config defaults to the saved task's final accuracy, even
     when its curriculum never reached that accuracy. Rules require an explicit
-    config. Recording runs sequentially and returns the same physical metrics.
+    config. CPU evaluation uses workers; Warp evaluates all learned episodes in
+    parallel from identical native reset states. Recording uses CPU physics.
     """
+    started = time.perf_counter()
+    if backend not in ("cpu", "warp"):
+        raise ValueError("Evaluation backend must be cpu or warp")
+    if backend == "warp" and (policy != "learned" or video_dir or checkpoint is None):
+        raise ValueError("Warp evaluation requires a learned checkpoint without video")
     if min(episodes, workers) < 1:
         raise ValueError("Episode and worker counts must be positive")
     if config is None:
@@ -217,7 +244,11 @@ def evaluate_pose(
         height=video_height,
     )
     seeds = list(range(seed, seed + episodes))
-    if workers == 1 or video_dir:
+    if backend == "warp":
+        from .pose_gpu_evaluation import evaluate_warp
+
+        rows = evaluate_warp(config, checkpoint, seeds, asset_root)
+    elif workers == 1 or video_dir:
         rows = call(seeds=seeds)
     else:
         groups = [seeds[i::workers] for i in range(min(workers, episodes))]
@@ -228,6 +259,8 @@ def evaluate_pose(
         rows.sort(key=lambda row: row["seed"])
     report = dict(
         policy=policy,
+        backend=backend,
+        evaluation_seconds=time.perf_counter() - started,
         config=asdict(config),
         seed=seed,
         episodes=rows,
@@ -242,6 +275,16 @@ def evaluate_pose(
         body_contact_episodes=sum(r["body_contact"] for r in rows),
         robot_contact_episodes=sum(r["robot_contact"] for r in rows),
         falls=sum(r["robot_fall"] or r["cargo_fall"] for r in rows),
+        mean_position_error_integral_m_s=float(
+            np.mean([r["position_error_integral_m_s"] for r in rows])
+        ),
+        mean_yaw_error_integral_rad_s=float(
+            np.mean([r["yaw_error_integral_rad_s"] for r in rows])
+        ),
+        mean_cargo_path_m=float(np.mean([r["cargo_path_m"] for r in rows])),
+        mean_time_to_success_or_limit_s=float(
+            np.mean([r["time_to_success_or_limit_s"] for r in rows])
+        ),
     )
     if checkpoint:
         report["checkpoint"] = str(checkpoint)

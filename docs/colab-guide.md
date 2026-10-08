@@ -1,120 +1,53 @@
-# Colabで報酬設計を比較する
+# Colabで報酬の組み合わせを比較する
 
-[学生用Colab](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_colab.ipynb)を開き、「ランタイム → ランタイムのタイプを変更」で **T4 GPU** を選び、上から実行します。
-GPUが利用できればMuJoCo Warp・固定歩行モデル・MAPPOへ使い、利用できなければCPUへ切り替えます。準備セルと学習セルが実際の学習先を表示します。
-GitHubの認証は不要です。既に取得したコードは学生の編集を残すため上書きしません。
-古い教材を使っている場合は、新規ランタイムで始めてください。
+[学生用Colab](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_colab.ipynb)を開き、T4 GPUを選び、上から実行します。
+公開GitHubから取得するので認証は不要です。既存のコードを上書きしないため、教材更新後は新規ランタイムを使ってください。
+研究の動機 → 学習済み歩行モデルへの指令 → Gym API → 報酬 → TorchRL MAPPO → 評価・動画の順です。
+普通のimportとPythonセルを使い、動画はmediapyで表示します。
 
-研究の動機、学習済み歩行モデルへの指令、運搬Gym API、報酬、MAPPO学習、評価・動画の順です。
-`with`構文や独自の実行クラスは使わず、普通のimportとセルで進めます。動画はmediapyで表示します。
+## 最初の比較
 
-## 課題と学習量
+共通のRL学習済みモデル `checkpoints/goal_side_pose.pt` から全条件を始めます。
+actor・critic・価値正規化の統計を読み、新しいAdamで報酬を変えて追加学習します。
+前の条件の重みを次へ渡しません。教師デモ・ルールの行動・模倣損失は使いません。
 
-横棒・縦棒の中心線が等長（2台用で両方1.3 m）のTを2台が脚・足で押します。
-初期配置はT→ゴール→ロボットです。押す側への回り込みと、位置・向き・停止を学びます。歩行モデルだけを固定します。
-標準は0.3〜0.4 m、目標との角度差±5〜30度、制限40秒です。
-最終評価は位置8 cm・角度5度・低速状態1秒を要求します。
-開始位置をTの背後から45度ずつ移す5段階と、目標精度を上げる2段階を使います。
-別seedの6試行を8ロールアウトごとに検証し、3/6成功かつ各段階8ロールアウト以上で進めます。
-難度の変更は次のresetにだけ適用し、途中の物理状態は変えません。
+時間コスト `time=0.02 / 0.5` と胴体接触コスト `body_contact=6 / 60` の2×2比較です。
+`conditions`の辞書が学生の編集箇所です。初めは2条件だけに減らしても構いません。
+成功率だけでなく、途中のズレ・所要時間・接触にどんな変化が出るか仮説を書いてから実行します。
 
-GPUでは256世界・horizon 64・ミニバッチ512・4 epochs・学習率3e-4を使います。
-1回に16,384チームステップを収集します。`NUM_ENVS` はロボット台数ではありません。
-CPUの2世界・horizon 128はAPIの体験・接続確認向けで、本課題の実学習にはGPUを使ってください。
-小さい予算を実行できたことと、運搬を獲得したことは区別します。
-criticの価値正規化を使い、各軸の7速度候補から選ぶ確率をランダムな重みからMAPPOが学びます。
-停止を明示的な候補に含め、評価時は平均ではなく確率最大の候補を使います。段階別の探索ノイズ調整は不要です。
-T座標の指令倍率は`[0.2, 0.2, 0.6]`。変換後の機体指令は元の歩行モデルの範囲に制限します。
+物理・配置・成功条件は全条件共通です。2台、等長2棒のT、T→ゴール→ロボット、制限40秒、
+位置8 cm・角度5度・低速1秒です。追加学習は最終課題へ固定し、難度の変更は行いません。
+標準のGPU設定は1024世界・horizon 64・ミニバッチ1024・4 epochs・学習率3e-4、gamma .995・GAE lambda .99です。
+262,144チームステップ（4ロールアウト）を追加します。CPU設定は接続確認用です。
+報酬とMAPPOの割引率を揃えます。物理・歩行モデル・収集・更新はGPUで計算し、学習中は描画しません。
+最初のコンパイルと評価・録画の時間は、追加学習のログと分けます。
 
-標準設定の新規学習はローカルRTX A6000で30.1分、未使用50配置で44件成功しました。
-これは1つの学習seedで、Colab/T4の実測時間ではありません。2条件を順に学習する時間は条件ごとにCSVで確認します。
+## 評価と卒論
 
-GPUでは物理計算・モーター制御・固定歩行モデル・接触計測・観測・報酬・Collectorの方策をGPUで実行します。
-actor・criticの学習、GAE、ミニバッチもGPU内で完結します。CPU環境ではCPUで収集します。
-最初はGPUカーネルをコンパイルし、毎回の高位ステップをCUDA graphで実行します。
-報酬はCPUとGPUの共通式です。GPUの物理演算はfloat32なのでCPUの軌跡と完全には一致しません。
-カリキュラム検証は学習と独立したGPU環境、最終評価・録画は通常のGym APIです。
-学習中は描画せず、実際のGPU状態を確認するときだけ `envs.render(world=0)` を呼びます。
-[構成・計測条件・制約](warp-training.md)に詳細があります。
+学習方策は`evaluate_pose(..., backend="warp")`で同じCPU初期配置から並列評価します。
+標準は開発用12配置です。GPUとCPUは数値精度が違うため、最終結果は`backend="cpu"`でも確認します。
+ルールの`forward`と`feedback`は比較専用です。どちらが良いかは実験で判断します。
+総報酬の大小で性能を比べません。成功率・最終誤差・途中の誤差の時間積分・失敗込み時間・接触・転倒を使います。
 
-両条件は同じ初期重み・seed・物理・学習量・段階移行の規則を使います。
-`orientation_error` だけを0から4へ増やし、角度の改善量の報酬と成功判定は共通に残します。
-補助報酬の割引率とMAPPOのgammaは0.995に揃えます。
-報酬の違いによって到達段階と経験する配置が変わるため、その違いも記録します。
-総報酬の大小で性能を比較せず、成功率・位置・角度・T端の誤差・接触・時間を使います。
+卒論では、学習量を開発配置で選び、設定を固定してから50以上の未使用配置で評価します。
+`TRAINING_SEED`を3種類以上に変え、実験名も変えて繰り返し、平均とばらつきを示します。
+共通モデルの事前学習は1 seedなので、この繰り返しは「同じ初期モデルからの適応のばらつき」です。
+**報酬変更後の適応**を調べる研究として位置づけ、初期重みからの学習とは区別します。
+短い学習で共通モデルの習慣が残る場合、予算を524,288・1,048,576へ増やして全条件を揃えて比較します。
+[実験計画と実測](reward-experiments.md)を参照してください。
 
-## ルールとの比較
+## 保存と再現
 
-`forward`は前進だけ、`feedback`は位置と角度の誤差から左右の速度を変える比例制御です。
-モデルとルールを同じ未使用seed・最終精度・制限時間で評価します。
-ルールの行動・軌跡・重みは学習に使いません。強化学習がルールより優れるかは評価で判断します。
-ルールのゲインを調整する場合も別の検証seedを使い、テストを残します。
+`create_experiment()`はコード・資産・モデル・版・SHA256を保存します。同名で上書きせず、新しい実験名を使います。
+条件ごとに`run.json`・`initial.pt`・`progress.csv`・`curriculum.json`・`pose.pt`が残ります。
+評価JSON・比較CSV・図・動画と一緒にZIPを作り、ランタイム削除前に保存します。
+`pose.pt`には重み・Adam・価値統計・報酬・段階・PyTorch乱数状態が入り、CPUでも読めます。
+共通モデルのSHA256と事前学習量も記録します。結果を移動してもモデルは読み込めます。
 
-標準評価は12試行、卒論では50試行以上・少なくとも3つの学習seedで繰り返します。
-モデル選択や設定の調整には開発・検証seedを使い、最終テスト結果からモデルを選び直しません。
-学習量を揃えた最後のモデルを比較し、失敗や転倒も集計します。
+ランダムな重みから学ぶ場合は [新規学習Colab](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_from_scratch.ipynb) を使います。
+新規学習はカリキュラムと3,145,728チームステップを使い、参考モデルの重みは読みません。
+共通モデルの新規学習はローカルRTX A6000で30.1分、未使用50配置で44件成功でした。Colab/T4の時間ではありません。
+追加学習を短くできても、この事前学習コストがなくなったとは扱いません。
 
-## 保存
-
-`create_experiment()`は実験名の新規フォルダを作り、実行時のコード・資産・モデル・版・SHA256を保存します。
-同じ名前で再実行せず、新しい実験名を付けてください。
-各条件に`run.json`、`initial.pt`、`progress.csv`、`curriculum.json`、途中checkpoint、最後の`pose.pt`が入ります。
-評価JSON・比較CSV・図・動画も同じ結果フォルダへ保存し、最後にZIPを作ります。
-
-`pose.pt`はactor・critic・optimizer・価値正規化の統計・設定・段階・CPUと使用したGPUのPyTorch乱数状態を含み、別の押すモデルは必要ありません。
-`run.json`には学習先・GPU名・物理計算先を記録します。GPUで保存したモデルもCPUで再生できます。
-結果フォルダを移動しても読み込めます。参考モデルの課題・学習量・評価条件は `checkpoints/manifest.json` を確認してください。旧形状のモデルと新しい課題の結果は区別します。
-参考動画は開発用配置の成功例として表示します。参考モデル・動画は学習へ渡さず、固定歩行モデル以外はランダムな重みから学習します。
-未保存の結果はランタイム削除で失われます。本実験では途中checkpointもDrive等へ保存します。
-
-## 学習を再開する
-
-```python
-import torch
-from hexapod_transport_rl import (
-    load_mappo, PosePushConfig, PoseStage, PoseCurriculum,
-    TorchRLTransportEnv, MAPPOSettings, make_mappo_loss,
-)
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-actor, critic, saved = load_mappo("runs/goal_side_reward_trial_01/baseline/pose.pt", device=device)
-config = PosePushConfig.from_checkpoint(saved["pose_config"])
-settings = MAPPOSettings(**saved["training"]["settings"])
-loss = make_mappo_loss(
-    actor, critic, settings, value_normalizer_state=saved["value_normalizer"],
-)
-optimizer = torch.optim.Adam(loss.parameters(), lr=settings.learning_rate)
-optimizer.load_state_dict(saved["optimizer"])
-envs = TorchRLTransportEnv(
-    config, num_envs=saved["training"]["num_envs"],
-    backend=saved["training"].get("physics_backend", "cpu"),
-)
-envs.set_seed(saved["training"]["seed"])
-curriculum = PoseCurriculum(
-    config, envs, actor, "runs/pose_continued",
-    seed=saved["training"]["seed"], settings=settings,
-    horizon=saved["training"]["horizon"],
-    stages=tuple(PoseStage(**stage) for stage in saved["training"]["curriculum"]),
-    validate_every=saved["training"]["validate_every"],
-    minimum_rollouts=saved["training"]["minimum_rollouts"],
-    validation_episodes=saved["training"]["validation_episodes"],
-    advance_threshold=saved["training"]["advance_threshold"], resume=saved,
-)
-torch.set_rng_state(saved["torch_rng_state"])
-if device.type == "cuda" and saved.get("cuda_rng_state") is not None:
-    torch.cuda.set_rng_state(saved["cuda_rng_state"], device)
-```
-
-この後はノートブックと同じCollector・buffer・更新ループを使います。
-Collectorの`total_frames`は追加で収集する量です。行動候補とその確率は保存モデルから復元されます。
-再開は重み・optimizer・段階を引き継ぎますが、
-中断時の物理状態や進行中のエピソードは復元しません。連続実行と完全に同じ軌跡にはなりません。
-最後に`curriculum.close()`と`collector.shutdown()`を呼びます。
-
-## 拡張
-
-`PosePushConfig(num_robots=4)`で機体数を増やせます。Tの横棒・縦棒は4台用では両方2.6 mです。
-ネットワークは`make_mappo_networks(envs.num_robots, envs.obs_dim, action_grid=ACTION_GRID)`で機体数と観測の形に合わせます。
-2台の保存モデルを4台へそのまま使いません。役割配置・学習・成功率を再検証します。
-摩擦・質量・初期角度・停止精度は1つずつ変更して比較してください。
-現状は平坦な床・障害物なし・シミュレータの状態を観測する条件です。
+4台の運搬は別に新しく学習・評価します。2台のモデルをそのまま4台へ使いません。
+現状は平坦床・障害物なし・シミュレータ状態の観測です。質量・摩擦・認識誤差への一般化は別に検証します。
