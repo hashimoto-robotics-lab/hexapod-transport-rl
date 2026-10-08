@@ -29,8 +29,10 @@ from hexapod_transport_rl.model import build_model
 from hexapod_transport_rl.pose_evaluation import evaluate_pose
 
 
-def test_equal_arms_nonoverlap_uniform_density_and_matching_marker():
-    cfg = PushConfig(shape="T")
+@pytest.mark.parametrize("geometry", ["equal_bars", "equal_arms"])
+@pytest.mark.parametrize("num_robots", [2, 3, 4])
+def test_t_nonoverlap_uniform_density_and_matching_marker(geometry, num_robots):
+    cfg = PushConfig(shape="T", t_geometry=geometry, num_robots=num_robots)
     model = build_model(find_asset_root(), cfg)
     bar, stem = model.geom("cargo_bar"), model.geom("cargo_stem")
     junction = bar.pos[:2]
@@ -42,8 +44,11 @@ def test_equal_arms_nonoverlap_uniform_density_and_matching_marker():
         ]
     )
     np.testing.assert_allclose(
-        np.linalg.norm(endpoints - junction, axis=1), cfg.t_arm_length
+        np.linalg.norm(endpoints - junction, axis=1),
+        [cfg.t_arm_length, cfg.t_arm_length, cfg.t_stem_length],
     )
+    if geometry == "equal_bars":
+        assert 2 * bar.size[1] == pytest.approx(stem.pos[0] + stem.size[0])
     assert stem.pos[0] - stem.size[0] == pytest.approx(bar.pos[0] + bar.size[0])
     assert model.body("cargo").mass[0] == pytest.approx(cfg.cargo_mass)
     bar_area = 4 * bar.size[0] * bar.size[1]
@@ -58,6 +63,48 @@ def test_equal_arms_nonoverlap_uniform_density_and_matching_marker():
     assert cfg.rear_face == pytest.approx(-0.1)
     assert PushConfig.from_checkpoint({"shape": "T"}).t_geometry == "legacy"
     assert PushConfig.from_checkpoint(asdict(cfg)) == cfg
+
+
+@pytest.mark.parametrize("num_robots", [2, 3, 4])
+def test_pose_starts_beyond_goal_facing_cargo_without_initial_contact(num_robots):
+    env = PosePushEnv(PosePushConfig(num_robots=num_robots))
+    try:
+        for seed in range(20):
+            env.reset(seed=seed)
+            core = env.core
+            direction = core.goal / np.linalg.norm(core.goal)
+            projection = (core.robot_xy - core.cargo_xy) @ direction
+            assert np.all(projection > np.linalg.norm(core.goal) + 0.5)
+            assert np.all(np.abs(projection - core.cfg.start_distance) < 0.06)
+            headings = core.yaw(core.base_ids)
+            facing = np.stack((np.cos(headings), np.sin(headings)), -1)
+            assert np.all(facing @ direction < -0.99)
+            owners = core.contacts.geom_owner[core.data.contact.geom]
+            assert not np.any(
+                ((owners[:, 0] == -2) & (owners[:, 1] >= 0))
+                | ((owners[:, 1] == -2) & (owners[:, 0] >= 0))
+            )
+    finally:
+        env.close()
+
+
+def test_old_pose_checkpoint_retains_geometry_start_and_horizon():
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "checkpoints/pose_transport.pt"
+    _, _, saved = load_mappo(path)
+    cfg = PosePushConfig.from_checkpoint(saved["pose_config"])
+    assert cfg.t_geometry == "equal_arms"
+    assert cfg.robot_start == "cargo_rear"
+    assert cfg.episode_seconds == 12
+    env = PosePushEnv(cfg)
+    try:
+        env.reset(options={"randomize": False})
+        np.testing.assert_allclose(
+            env.core.robot_xy[:, 0], cfg.rear_face - cfg.push_gap - 0.1
+        )
+    finally:
+        env.close()
 
 
 def test_pose_gym_api_seed_and_reflected_actions():

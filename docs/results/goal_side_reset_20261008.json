@@ -1,0 +1,175 @@
+{
+  "description": "New untrained task: equal crossbar/stem centerline lengths; T -> goal -> robots, all robots face toward the cargo. Existing successful videos use the earlier equal-arm rear-start task.",
+  "initial_cases": [
+    {
+      "num_robots": 2,
+      "bar_length_m": 1.3,
+      "stem_length_m": 1.3,
+      "cargo_junction_xy": [
+        0.0,
+        0.0
+      ],
+      "goal_junction_xy": [
+        0.4,
+        0.0
+      ],
+      "robot_xy": [
+        [
+          1.85,
+          -0.325
+        ],
+        [
+          1.85,
+          0.325
+        ]
+      ],
+      "robot_yaw": [
+        3.141592653589793,
+        3.141592653589793
+      ],
+      "episode_seconds": 40.0,
+      "initial_ncon": 0
+    },
+    {
+      "num_robots": 3,
+      "bar_length_m": 1.9500000000000002,
+      "stem_length_m": 1.9500000000000002,
+      "cargo_junction_xy": [
+        0.0,
+        0.0
+      ],
+      "goal_junction_xy": [
+        0.4,
+        0.0
+      ],
+      "robot_xy": [
+        [
+          2.5,
+          -0.65
+        ],
+        [
+          2.5,
+          0.0
+        ],
+        [
+          2.5,
+          0.65
+        ]
+      ],
+      "robot_yaw": [
+        3.141592653589793,
+        3.141592653589793,
+        3.141592653589793
+      ],
+      "episode_seconds": 40.0,
+      "initial_ncon": 0
+    },
+    {
+      "num_robots": 4,
+      "bar_length_m": 2.6,
+      "stem_length_m": 2.6,
+      "cargo_junction_xy": [
+        0.0,
+        0.0
+      ],
+      "goal_junction_xy": [
+        0.4,
+        0.0
+      ],
+      "robot_xy": [
+        [
+          3.1500000000000004,
+          -0.9750000000000001
+        ],
+        [
+          3.1500000000000004,
+          -0.32500000000000007
+        ],
+        [
+          3.1500000000000004,
+          0.32499999999999996
+        ],
+        [
+          3.1500000000000004,
+          0.9750000000000001
+        ]
+      ],
+      "robot_yaw": [
+        3.141592653589793,
+        3.141592653589793,
+        3.141592653589793,
+        3.141592653589793
+      ],
+      "episode_seconds": 40.0,
+      "initial_ncon": 0
+    }
+  ],
+  "verification": {
+    "cpu_suite": "85 passed, 10 skipped; OSMesa; 129.23 seconds",
+    "gpu_pose_and_warp": "25 passed; RTX A6000; 36.85 seconds",
+    "goal_side_placement": "2, 3, 4 robots; CPU 20 seeds each; GPU 5 seeds x 2 worlds each; no initial robot-cargo contacts; nonrandom CPU/GPU qpos agree within 1e-6",
+    "full_successful_training_performed": false,
+    "notebook_connection_smoke": {
+      "note": "Connection smoke only; not a successful training run or task-performance evaluation",
+      "conditions": [
+        {
+          "condition": "baseline",
+          "frames": 1024,
+          "model": "/home/hashimoto/2026/10/hexapod_transport_rl/runs/goal_side_notebook_smoke_20261008/baseline/pose.pt",
+          "physics_backend": "warp",
+          "actor_updated": true
+        },
+        {
+          "condition": "no_orientation",
+          "frames": 1024,
+          "model": "/home/hashimoto/2026/10/hexapod_transport_rl/runs/goal_side_notebook_smoke_20261008/no_orientation/pose.pt",
+          "physics_backend": "warp",
+          "actor_updated": true
+        }
+      ]
+    },
+    "old_checkpoint_replay": {
+      "seed": 87004,
+      "success": true,
+      "simulated_seconds": 4.4,
+      "geometry": "equal_arms",
+      "robot_start": "cargo_rear",
+      "episode_seconds": 12
+    }
+  },
+  "source_sha256": {
+    "src/hexapod_transport_rl/__init__.py": "2eb1e2f6bdbf25b950da8b2d3c25a1fe8662736b83b8dab5dd2276754afa8712",
+    "src/hexapod_transport_rl/api.py": "2534278048b167270c03873aa7921b59c83f4936134bb91f68e247d4380c66c2",
+    "src/hexapod_transport_rl/approach.py": "4630e67db7d31e6ba6b9b659a734638f9abb5d1b40fa8bf9c91029065d53a09a",
+    "src/hexapod_transport_rl/approach_evaluation.py": "35d49f33ed1beeb6d13177192a4062ce2d512180b5d4536509e65e37a8942a01",
+    "src/hexapod_transport_rl/approach_training.py": "a41cc2fb3dcbefffb4d880f35a20d28739aed26608e0428a68cc19b57c82c419",
+    "src/hexapod_transport_rl/cli.py": "90e1241bd4770fdcb5967270548d7f7590f2c3c42062d9861045ff512159678b",
+    "src/hexapod_transport_rl/config.py": "f0355c3f4bbd0789d0381689387e8345ba1ddc9b0c6193ec2b8fa56611a173ad",
+    "src/hexapod_transport_rl/contacts.py": "8a39443988711c47c3846c1fd430c591adfffece1fddebaad88f502dbde285af",
+    "src/hexapod_transport_rl/env.py": "8f2d00945eb074d04f965cf1af9492ae623f10d440a9c7a1d5204254d3982605",
+    "src/hexapod_transport_rl/experiments.py": "67344944b9ad935b9f5899d4348e5cc77097e62ffdc84e00ddb9971d630f7b10",
+    "src/hexapod_transport_rl/handover_training.py": "b900d4ae113eb2fec3b0baf7884e65067285ed7226bf9a1e1aa9114c57d71593",
+    "src/hexapod_transport_rl/locomotion.py": "c79e0caa2b7fb2dc2eaf4dbcaa0ba9b9dad6fe98e81c4eef60f2b0ef6f693b20",
+    "src/hexapod_transport_rl/mappo.py": "7dfce82e7acdd551d19ba0271ae96ba62960fbb257e995e9f3bd3807ad466961",
+    "src/hexapod_transport_rl/model.py": "4554737ac4cd2ac7b99f51d277d8993b60963cf45cacf65c02bbed9250fbcc45",
+    "src/hexapod_transport_rl/motor.py": "fede27d8f0162c3836bc94b467d7f23b25256276122b2f7a12286a0c3700c15b",
+    "src/hexapod_transport_rl/pose_evaluation.py": "f53f08a0a38a4e18a04031f387800331e29d759c47d49d07ebcb26e013724b61",
+    "src/hexapod_transport_rl/pose_push.py": "75e87798603c724f7f950edaf53a8003565447d2f5e6b740292ebf0345702e73",
+    "src/hexapod_transport_rl/pose_rewards.py": "f4e492c032fdcb0b467c561051df9772a8723e7ff91bb1a7ea0fb63667a4388f",
+    "src/hexapod_transport_rl/pose_training.py": "e2cde393cf58f4e0a04f43df262c6e13f764ab02473de6aa8e57d81c2ed3e1af",
+    "src/hexapod_transport_rl/rewards.py": "8fdc04cb736d83bec0c7a6e3d34e84a99c9d9610a97472928d380c199a609e0a",
+    "src/hexapod_transport_rl/torchrl_env.py": "6f2a43a2d08565012b8fd7b120e6009994ea0b5fb14debf116a950b8f3c93767",
+    "src/hexapod_transport_rl/torchrl_mappo.py": "fc04b7c58e97251b4a0f1b4fb5e6d080f7549f0b676daaa20ac36c0704a53c15",
+    "src/hexapod_transport_rl/torchrl_training.py": "f6c327b138de1865ac59a8a0184aaa17517a858be46ffeed78e9484ed317a836",
+    "src/hexapod_transport_rl/types.py": "11289f82bf87a7b36da8880046129c4b5cc590ae25bc33339788f4c8e75a23a3",
+    "src/hexapod_transport_rl/vector.py": "7a81b5feb54ea16794d5ed95e03487f913a104089b5113009e9b51882a0d2db4",
+    "src/hexapod_transport_rl/walking.py": "17c618d51432434161dc2ff6bbed4ca6e4b37a4aa71906382a98826e9037683d",
+    "src/hexapod_transport_rl/walking_env.py": "d47ea3dcba2e43fe8d6e225dfd754a0054a7dec1f12b774c8497c1cc7fd59983",
+    "src/hexapod_transport_rl/warp_contacts.py": "61df4d73aac8f3565681a93df2682031e683be9110d9121157d8002c65cc079e",
+    "src/hexapod_transport_rl/warp_physics.py": "ae449bc60555d05b2278a991e442be99039e954d3a29563c00621cc2057f1dc4",
+    "src/hexapod_transport_rl/warp_pose.py": "0da63396c9754d2b81341187238889fff454a8eb2d99c16514927d4805ddb75b",
+    "notebooks/hexapod_transport_rl_colab.ipynb": "67a6d4661e3c820cb6d07d09029b44f519cfa55722cc90cb1743a1248437aafb"
+  },
+  "render_script": "from pathlib import Path\nimport json\nimport imageio.v2 as imageio\nimport matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nfrom matplotlib.patches import Rectangle\nimport numpy as np\nimport torch\nfrom hexapod_transport_rl import PosePushConfig, PosePushEnv\n\nroot = Path('/home/hashimoto/2026/10/hexapod_transport_rl')\ntorch.set_num_threads(1)\nconfigs = []\nfor n in (2, 3, 4):\n    cfg = PosePushConfig(num_robots=n)\n    env = PosePushEnv(cfg, render_mode='rgb_array', width=960, height=720)\n    obs, info = env.reset(options={'randomize': False})\n    if n == 2:\n        imageio.imwrite(root/'docs/figures/goal_side_start.png', env.render())\n    positions = env.core.robot_xy.copy()\n    configs.append({'num_robots': n, 'bar_length_m': cfg.width, 'stem_length_m': cfg.t_stem_length,\n                    'cargo_junction_xy': env.core.cargo_xy.tolist(), 'goal_junction_xy': env.core.goal.tolist(),\n                    'robot_xy': positions.tolist(), 'robot_yaw': env.core.yaw(env.core.base_ids).tolist(),\n                    'episode_seconds': cfg.episode_seconds, 'initial_ncon': env.core.data.ncon})\n    env.close()\n\ncfg = PosePushConfig()\nfig, ax = plt.subplots(figsize=(6, 5))\nax.add_patch(Rectangle((-cfg.width/2, -.1), cfg.width, .2, facecolor='#e5a626'))\nax.add_patch(Rectangle((-.1, -.1), .2, -(cfg.t_stem_length-.1), facecolor='#e5a626'))\nax.scatter([0], [0], color='#343a40', s=25, zorder=5)\nax.annotate('', xy=(-.65, .22), xytext=(.65, .22), arrowprops={'arrowstyle':'<->'})\nax.text(0, .29, 'Crossbar: 1.30 m', ha='center')\nax.annotate('', xy=(.25, 0), xytext=(.25, -1.3), arrowprops={'arrowstyle':'<->'})\nax.text(.31, -.65, 'Stem: 1.30 m', rotation=90, va='center')\nax.text(-.16, -.65, 'Thickness: 0.20 m', ha='right')\nax.set(xlim=(-.9, .9), ylim=(-1.48, .55), aspect='equal')\nax.axis('off')\nfig.tight_layout()\nfig.savefig(root/'docs/figures/equal_bar_t.png', dpi=160)\nplt.close(fig)\n(root/'docs/results/goal_side_reset_20261008.json').write_text(json.dumps({'description':'New untrained task: equal crossbar/stem centerline lengths; T -> goal -> robots, all robots face toward the cargo. Existing successful videos use the earlier equal-arm rear-start task.', 'initial_cases':configs},indent=2)+'\\n')\nprint(configs)\n",
+  "notebook_smoke_script": "import json\nfrom pathlib import Path\nimport gymnasium as gym\nimport torch\nfrom hexapod_transport_rl import PosePushConfig\n\nroot=Path('/home/hashimoto/2026/10/hexapod_transport_rl')\nn=json.loads((root/'notebooks/hexapod_transport_rl_colab.ipynb').read_text())\ncells={c['id']: ''.join(c['source']) for c in n['cells']}\nns={'PROJECT_DIR':root,'PosePushConfig':PosePushConfig,'gym':gym}\ntorch.set_num_threads(1)\nexec(cells['cell-11'],ns)\nexec(cells['cell-13'].replace('goal_side_reward_trial_01','goal_side_notebook_smoke_20261008'),ns)\nns['TRAINING_STEPS']=1024\nexec(cells['cell-17'],ns)\nexec(cells['cell-19'],ns)\nresults=[]\nfor name,path in ns['models'].items():\n before=torch.load(path.parent/'initial.pt',weights_only=True,map_location='cpu')\n after=torch.load(path,weights_only=True,map_location='cpu')\n assert after['pose_config']['t_geometry']=='equal_bars'\n assert after['pose_config']['robot_start']=='goal_side'\n assert any(not torch.equal(v,after['actor'][k]) for k,v in before['actor'].items())\n results.append({'condition':name,'frames':1024,'model':str(path),'physics_backend':after['training']['physics_backend'],'actor_updated':True})\nprint(results,flush=True)\n(root/'runs/goal_side_notebook_smoke_20261008/verification.json').write_text(json.dumps({'note':'Connection smoke only; not a successful training run or task-performance evaluation','conditions':results},indent=2)+'\\n')\n"
+}

@@ -177,7 +177,7 @@ def evaluate_pose(
             _, _, saved = load_mappo(checkpoint)
             if saved["format"] != POSE_FORMAT:
                 raise ValueError("Pose evaluation requires a pose checkpoint")
-            config = PosePushConfig(**saved["pose_config"])
+            config = PosePushConfig.from_checkpoint(saved["pose_config"])
     if not isinstance(config, PosePushConfig):
         raise TypeError("Pose evaluation requires PosePushConfig")
     if config.dt != 0.2 and video_dir:

@@ -233,7 +233,7 @@ def save_mappo(
     if training.get("settings", {}).get("value_normalization") and normalizer is None:
         raise ValueError("Pass loss to save its value normalizer for resuming")
     if isinstance(config, PosePushConfig):
-        if PosePushConfig(**provenance["pose_config"]) != config:
+        if PosePushConfig.from_checkpoint(provenance["pose_config"]) != config:
             raise ValueError("Saved pose config differs from the training world")
         extra = dict(pose_config=asdict(config))
         file_format, num_robots = POSE_FORMAT, config.num_robots
@@ -294,7 +294,7 @@ def load_mappo(path: str | Path, *, device="cpu"):
     if saved.get("network") != NETWORK:
         raise ValueError("Unrecognized TorchRL network architecture")
     if saved.get("format") == POSE_FORMAT:
-        config = PosePushConfig(**saved["pose_config"])
+        config = PosePushConfig.from_checkpoint(saved["pose_config"])
         if saved.get("num_robots") != config.num_robots or saved.get(
             "obs_dim"
         ) != 18 + 4 * (config.num_robots - 1):

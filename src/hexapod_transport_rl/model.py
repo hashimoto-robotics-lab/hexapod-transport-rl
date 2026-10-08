@@ -178,11 +178,11 @@ def _add_cargo(world: ET.Element, cfg: PushConfig, all_bits: int) -> ET.Element:
             mass=str(cfg.cargo_mass),
             **common,
         )
-    elif cfg.t_geometry == "equal_arms":
-        # Origin is the centerline junction. All three endpoints are L away.
+    elif cfg.t_geometry != "legacy":
+        # Origin is the centerline junction; pieces do not overlap.
         thickness = 0.2
         arm = cfg.t_arm_length
-        stem_length = arm - thickness / 2
+        stem_length = cfg.t_stem_length - thickness / 2
         fraction = cfg.width / (cfg.width + stem_length)
         ET.SubElement(
             cargo,

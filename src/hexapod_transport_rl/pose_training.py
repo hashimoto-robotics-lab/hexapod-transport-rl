@@ -97,7 +97,7 @@ class PoseCurriculum:
             )
         if resume:
             if (
-                PosePushConfig(**resume["pose_config"]) != config
+                PosePushConfig.from_checkpoint(resume["pose_config"]) != config
                 or MAPPOSettings(**resume["training"]["settings"]) != settings
                 or resume["training"]["curriculum"] != self.training["curriculum"]
                 or resume["training"]["advance_threshold"] != advance_threshold

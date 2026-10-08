@@ -151,17 +151,24 @@ class WarpPoseWorlds:
             -1,
         )
         jitter = random[:, 4:].reshape(self.num_envs, self.num_robots, 3) * 2 - 1
+        spawn_heading = heading
+        spawn_distance = cfg.rear_face - cfg.push_gap - 0.10
+        if cfg.robot_start == "goal_side":
+            spawn_heading = heading + torch.atan2(
+                lateral, torch.full_like(lateral, cfg.goal_distance)
+            )
+            spawn_distance = cfg.start_distance
         for robot in range(self.num_robots):
             q = int(self.reference.core.root_q[robot])
             local = torch.stack(
                 (
-                    torch.full_like(heading, cfg.rear_face - cfg.push_gap - 0.10),
+                    torch.full_like(heading, spawn_distance),
                     self.slots[robot].expand_as(heading),
                 ),
                 -1,
             )
-            xy = cargo_coordinates(local, -heading)
-            yaw = heading
+            xy = cargo_coordinates(local, -spawn_heading)
+            yaw = spawn_heading + (torch.pi if cfg.robot_start == "goal_side" else 0)
             if randomized:
                 xy = xy + jitter[:, robot, :2] * cfg.position_jitter
                 yaw = yaw + jitter[:, robot, 2] * cfg.yaw_jitter

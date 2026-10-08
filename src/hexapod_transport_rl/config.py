@@ -73,7 +73,7 @@ class PushConfig:
     shape: str = "box"
     cargo_mass: float = 2.0
     cargo_friction: float = 0.3
-    t_geometry: str = "equal_arms"
+    t_geometry: str = "equal_bars"
     # Goal, episode horizon and control timing.
     goal_distance: float = 2.0
     episode_seconds: float = 40.0
@@ -94,8 +94,8 @@ class PushConfig:
             )
         if not isinstance(self.num_robots, int) or not 2 <= self.num_robots <= 4:
             raise ValueError("num_robots must be an integer between 2 and 4")
-        if self.t_geometry not in ("equal_arms", "legacy"):
-            raise ValueError("t_geometry must be equal_arms or legacy")
+        if self.t_geometry not in ("equal_bars", "equal_arms", "legacy"):
+            raise ValueError("Unknown T geometry")
         if self.shape not in ("box", "T"):
             raise ValueError("shape must be box or T")
         if (
@@ -136,17 +136,22 @@ class PushConfig:
         """Cargo extent along its local X axis."""
         if self.shape == "box":
             return 0.45
-        return 0.7 if self.t_geometry == "legacy" else self.t_arm_length + 0.1
+        return 0.7 if self.t_geometry == "legacy" else self.t_stem_length + 0.1
 
     @property
     def t_arm_length(self) -> float:
-        """Junction to each of the three T endpoints, in meters."""
+        """Junction to either lateral endpoint of the crossbar, in meters."""
         return self.width / 2
+
+    @property
+    def t_stem_length(self) -> float:
+        """Junction to stem tip; equal bars use the full crossbar length."""
+        return self.width if self.t_geometry == "equal_bars" else self.t_arm_length
 
     @property
     def rear_face(self) -> float:
         """Rear cargo surface in local X; equal-arm T origin is its junction."""
-        if self.shape == "T" and self.t_geometry == "equal_arms":
+        if self.shape == "T" and self.t_geometry != "legacy":
             return -0.1
         return -self.depth / 2
 

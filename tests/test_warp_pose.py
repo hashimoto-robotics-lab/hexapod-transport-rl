@@ -1,5 +1,7 @@
 """Real CUDA physics, formula parity, reset isolation and TorchRL time limits."""
 
+from dataclasses import replace
+
 import mujoco
 import numpy as np
 import pytest
@@ -42,6 +44,45 @@ def copy_lane(worlds, native, lane):
     core.goal_yaw = float(worlds.goal_yaw[lane])
     core.last_commands = worlds.last_commands[lane].cpu().numpy().copy()
     mujoco.mj_forward(core.model, core.data)
+
+
+@pytest.mark.parametrize("num_robots", [2, 3, 4])
+def test_goal_side_gpu_reset_matches_cpu_and_stays_beyond_goal(num_robots):
+    pytest.importorskip("mujoco_warp")
+    torch.set_num_threads(1)
+    cfg = PosePushConfig(num_robots=num_robots)
+    env = TorchRLTransportEnv(cfg, num_envs=2, backend="warp")
+    native = PosePushEnv(cfg)
+    try:
+        env.worlds.reset(options={"randomize": False})
+        native.reset(options={"randomize": False})
+        np.testing.assert_allclose(
+            env.worlds.physics.qpos[0].cpu(), native.core.data.qpos, atol=1e-6
+        )
+        for seed in range(5):
+            env.worlds.reset(seed=seed)
+            w = env.worlds
+            direction = w.goal / torch.linalg.vector_norm(w.goal, dim=-1, keepdim=True)
+            positions = w.physics.xpos[:, w.physics.base_ids, :2]
+            projection = (positions * direction[:, None]).sum(-1)
+            assert bool(
+                (
+                    projection > torch.linalg.vector_norm(w.goal, dim=-1)[:, None] + 0.5
+                ).all()
+            )
+            facing = w.physics.xmat[:, w.physics.base_ids, :2, 0]
+            assert bool(((facing * direction[:, None]).sum(-1) < -0.99).all())
+            for lane in range(2):
+                copy_lane(w, native, lane)
+                owners = native.core.contacts.geom_owner[native.core.data.contact.geom]
+                assert not np.any(
+                    ((owners[:, 0] == -2) & (owners[:, 1] >= 0))
+                    | ((owners[:, 1] == -2) & (owners[:, 0] >= 0))
+                )
+        w.physics.check()
+    finally:
+        env.close()
+        native.close()
 
 
 def test_gpu_observation_and_reward_match_native_formulas(worlds):
@@ -110,6 +151,7 @@ def test_partial_reset_preserves_active_physics_walker_and_tolerances(worlds):
 
 
 def test_gpu_contacts_include_physical_legs_and_detect_body(worlds):
+    worlds.pending_config = replace(worlds.config, robot_start="cargo_rear")
     # Bring the T close enough for the standing front legs to touch it.
     worlds.reset(options={"randomize": False})
     worlds.physics.qpos[:, worlds.root_q + 0] += 0.11

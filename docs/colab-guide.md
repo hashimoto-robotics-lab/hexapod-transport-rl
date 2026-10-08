@@ -10,8 +10,9 @@ GitHubの認証は不要です。既に取得したコードは学生の編集�
 
 ## 課題と学習量
 
-等長3腕のTを2台が脚・足で押し、位置・向き・停止を学びます。歩行モデルだけを固定します。
-標準は0.3〜0.4 m、目標との角度差±5〜30度、制限12秒です。
+横棒・縦棒の中心線が等長（2台用で両方1.3 m）のTを2台が脚・足で押します。
+初期配置はT→ゴール→ロボットです。押す側への回り込みと、位置・向き・停止を学びます。歩行モデルだけを固定します。
+標準は0.3〜0.4 m、目標との角度差±5〜30度、制限40秒です。
 最終評価は位置8 cm・角度5度・低速状態1秒を要求します。
 3つの段階を別seedの6試行で検証し、50%以上かつ各段階25ロールアウト以上で進めます。
 難度の変更は次のresetにだけ適用し、途中の物理状態は変えません。
@@ -19,7 +20,8 @@ GitHubの認証は不要です。既に取得したコードは学生の編集�
 GPUの標準は131,072チームステップ／条件、64世界並列、horizon 16です。
 CPUでは65,536、2世界、horizon 128です。ミニバッチはGPUで256・CPUで128、4 epochs・学習率3e-4は共通です。
 GPUでは1回の収集量を1,024ステップとし、128回の収集・更新を行います。
-学習時間は実行時のCSVを確認します。[測定記録](pose-task.md)に実験条件と結果があります。
+学習時間は実行時のCSVを確認します。[過去の測定記録](pose-task.md)は旧形状・近傍開始の結果です。
+回り込みを含む新しい条件での成功率・必要な学習量は未測定です。
 256ステップに減らす場合は接続確認だけで、成功する学習とは区別します。
 criticの価値正規化と、探索ノイズ上限を約0.37から0.05へ下げる設定を使います。
 ノイズの変更はPPO更新後・次の収集前に行い、actorが学ぶ行動の平均を変更しません。
@@ -57,7 +59,8 @@ actor・criticの学習、GAE、ミニバッチもGPU内で完結します。CPU
 
 `pose.pt`はactor・critic・optimizer・価値正規化の統計・設定・段階・CPUと使用したGPUのPyTorch乱数状態を含み、別の押すモデルは必要ありません。
 `run.json`には学習先・GPU名・物理計算先を記録します。GPUで保存したモデルもCPUで再生できます。
-結果フォルダを移動しても読み込めます。同梱の参考モデルは参考再生専用で、自分の学習には使いません。
+結果フォルダを移動しても読み込めます。同梱の参考モデルは旧形状・T近傍からの開始で学習したもので、新しい課題の実績ではありません。
+新しい教材では参考再生を省き、固定歩行モデル以外はランダムな重みから学習します。
 未保存の結果はランタイム削除で失われます。本実験では途中checkpointもDrive等へ保存します。
 
 ## 学習を再開する
@@ -70,8 +73,8 @@ from hexapod_transport_rl import (
 )
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-actor, critic, saved = load_mappo("runs/pose_reward_trial_01/baseline/pose.pt", device=device)
-config = PosePushConfig(**saved["pose_config"])
+actor, critic, saved = load_mappo("runs/goal_side_reward_trial_01/baseline/pose.pt", device=device)
+config = PosePushConfig.from_checkpoint(saved["pose_config"])
 settings = MAPPOSettings(**saved["training"]["settings"])
 loss = make_mappo_loss(
     actor, critic, settings, value_normalizer_state=saved["value_normalizer"],
@@ -107,7 +110,7 @@ Collectorの`total_frames`は追加で収集する量です。探索ノイズの
 
 ## 拡張
 
-`PosePushConfig(num_robots=4)`で機体数を増やせます。Tの3腕は4台用では各1.3 mです。
+`PosePushConfig(num_robots=4)`で機体数を増やせます。Tの横棒・縦棒は4台用では両方2.6 mです。
 ネットワークは`make_mappo_networks(envs.num_robots, envs.obs_dim)`で機体数と観測の形に合わせます。
 2台の保存モデルを4台へそのまま使いません。役割配置・学習・成功率を再検証します。
 摩擦・質量・初期角度・停止精度は1つずつ変更して比較してください。

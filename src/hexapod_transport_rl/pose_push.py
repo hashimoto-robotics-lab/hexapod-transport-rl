@@ -1,6 +1,6 @@
-"""Short-distance translation, rotation and settling, learned from team rewards.
+"""Approaching, pushing, rotation and settling, learned from team rewards.
 
-The T origin is the junction of three equal arms. Robot observations and actions
+The T origin is the junction of its two bars. Robot observations and actions
 use a mirrored coordinate convention to share the same actor between both sides.
 No controller or demonstration produces learning actions.
 """
@@ -15,7 +15,7 @@ import torch
 from gymnasium import spaces
 
 from .api import HexapodPushEnv
-from .config import COMMAND_LIMIT, PushConfig, rotation, wrap
+from .config import COMMAND_LIMIT, STAND_HEIGHT, PushConfig, rotation, wrap
 from .contacts import BODY
 from .env import PushEnv
 from .pose_rewards import pose_reward_terms
@@ -30,7 +30,7 @@ class PosePushConfig(PushConfig):
 
     shape: str = "T"
     goal_distance: float = 0.4
-    episode_seconds: float = 12.0
+    episode_seconds: float = 40.0
     position_tolerance: float = 0.08
     yaw_tolerance: float = radians(5)
     success_hold_seconds: float = 1.0
@@ -40,6 +40,8 @@ class PosePushConfig(PushConfig):
     goal_lateral_range: float = 0.08
     position_jitter: float = 0.04
     yaw_jitter: float = 0.12
+    robot_start: str = "goal_side"
+    start_clearance: float = 0.55
     shaping_discount: float = 0.99
     reward_weights: PoseRewardWeights = field(default_factory=PoseRewardWeights)
 
@@ -49,8 +51,12 @@ class PosePushConfig(PushConfig):
                 self, "reward_weights", PoseRewardWeights(**self.reward_weights)
             )
         super().__post_init__()
-        if self.shape != "T" or self.t_geometry != "equal_arms":
-            raise ValueError("Pose pushing uses the equal-arm T")
+        if self.shape != "T" or self.t_geometry == "legacy":
+            raise ValueError("Pose pushing uses a T with a centerline-junction origin")
+        if self.robot_start not in ("goal_side", "cargo_rear"):
+            raise ValueError("robot_start must be goal_side or cargo_rear")
+        if not np.isfinite(self.start_clearance) or self.start_clearance <= 0:
+            raise ValueError("start_clearance must be positive and finite")
         values = (
             self.max_yaw_degrees,
             self.min_yaw_degrees,
@@ -66,6 +72,16 @@ class PosePushConfig(PushConfig):
             raise ValueError("Pose reset ranges must be finite and nonnegative")
         if self.min_yaw_degrees > self.max_yaw_degrees or self.max_yaw_degrees > 90:
             raise ValueError("Yaw reset range must satisfy 0 <= min <= max <= 90")
+
+    @property
+    def start_distance(self):
+        """Robot-center distance along cargo-to-goal direction at reset."""
+        return max(self.t_stem_length, self.goal_distance) + self.start_clearance
+
+    @classmethod
+    def from_checkpoint(cls, saved: dict):
+        """Keep the geometry and near-cargo starts of older pose checkpoints."""
+        return cls(**{"t_geometry": "equal_arms", "robot_start": "cargo_rear", **saved})
 
 
 @dataclass(frozen=True)
@@ -181,16 +197,30 @@ class PosePhysics(PushEnv):
         return heading
 
     def _reset_robot_poses(self, cargo_heading, randomize):
-        super()._reset_robot_poses(cargo_heading, False)
-        if randomize:
-            for q in self.root_q:
+        if self.cfg.robot_start == "cargo_rear":
+            super()._reset_robot_poses(cargo_heading, False)
+            heading = cargo_heading
+        else:
+            direction = np.arctan2(self.goal[1], self.goal[0])
+            heading = direction + np.pi
+            for i, q in enumerate(self.root_q):
+                xy = rotation(direction) @ [self.cfg.start_distance, self.cfg.slots[i]]
+                self.data.qpos[q : q + 7] = (
+                    *xy,
+                    STAND_HEIGHT,
+                    np.cos(heading / 2),
+                    0,
+                    0,
+                    np.sin(heading / 2),
+                )
+        for q in self.root_q:
+            yaw = heading
+            if randomize:
                 self.data.qpos[q : q + 2] += self.rng.uniform(
                     -self.cfg.position_jitter, self.cfg.position_jitter, 2
                 )
-                yaw = cargo_heading + self.rng.uniform(
-                    -self.cfg.yaw_jitter, self.cfg.yaw_jitter
-                )
-                self.data.qpos[q + 3 : q + 7] = (np.cos(yaw / 2), 0, 0, np.sin(yaw / 2))
+                yaw += self.rng.uniform(-self.cfg.yaw_jitter, self.cfg.yaw_jitter)
+            self.data.qpos[q + 3 : q + 7] = (np.cos(yaw / 2), 0, 0, np.sin(yaw / 2))
 
     def observe(self):
         return observe_pose(self)
@@ -208,7 +238,7 @@ class PosePhysics(PushEnv):
             [
                 [0, -self.cfg.t_arm_length],
                 [0, self.cfg.t_arm_length],
-                [self.cfg.t_arm_length, 0],
+                [self.cfg.t_stem_length, 0],
             ]
         )
         actual = endpoints @ rotation(self.cargo_yaw).T + self.cargo_xy
@@ -265,6 +295,12 @@ class PosePushEnv(HexapodPushEnv):
         self.stage_name = stage.name
 
     def _configure_camera(self, camera):
+        if self.config.robot_start == "goal_side":
+            direction = self.core.goal / np.linalg.norm(self.core.goal)
+            camera.lookat[:] = [*(direction * self.config.start_distance / 2), 0.15]
+            camera.distance = max(4.5, self.config.width + 2.5)
+            camera.azimuth, camera.elevation = 135, -50
+            return
         camera.lookat[:] = [*(self.core.goal / 2), 0.15]
         camera.distance = max(3.8, self.config.width + 2.0)
         camera.azimuth, camera.elevation = 135, -50
