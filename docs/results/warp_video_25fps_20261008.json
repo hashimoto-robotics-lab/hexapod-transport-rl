@@ -1,0 +1,43 @@
+{
+  "video": "docs/figures/warp_pose_diagonal_25fps.mp4",
+  "fps": 25,
+  "frames": 226,
+  "simulated_seconds": 9.0,
+  "encoded_seconds": 9.04,
+  "seed": 84000,
+  "checkpoint_sha256": "42604d4ab762c8f876eb74323cb6ba4d085fa8f0eb43622a371042fff038ecb7",
+  "initial_yaw_error_degrees": 24.09432120620573,
+  "success": true,
+  "distance_m": 0.039903923869132996,
+  "robot_fall": false,
+  "cargo_fall": false,
+  "body_contact_ticks": 0,
+  "leg_contact_ticks": 1353,
+  "foot_contact_ticks": 119,
+  "robot_contact_ticks": 0,
+  "recording_wall_seconds": 178.5746736570727,
+  "verification": [
+    "physics, walking history, observations and reward close within atol/rtol=2e-4; identical contact counts and done",
+    "physics, walking history, observations and reward close within atol/rtol=2e-4; identical contact counts and done",
+    "physics, walking history, observations and reward close within atol/rtol=2e-4; identical contact counts and done"
+  ],
+  "recording": "Actual qpos/qvel copied after every 8 unchanged 200 Hz physics steps, rendered at 25 Hz. Actor still runs at 5 Hz. No duplicated/interpolated frames or speed change.",
+  "script": "\"\"\"Record actual 25 Hz GPU states without changing actions or physics steps.\"\"\"\nimport hashlib\nimport json\nimport time\nfrom pathlib import Path\n\nimport imageio.v2 as imageio\nimport mujoco\nimport mujoco_warp as mjw\nimport numpy as np\nimport torch\nimport warp as wp\nfrom tensordict import TensorDict\nfrom hexapod_transport_rl import PosePushConfig, PosePushEnv, TorchRLTransportEnv, load_mappo\nfrom hexapod_transport_rl.config import PHYSICS_STEPS\n\nROOT = Path('/home/hashimoto/2026/10/hexapod_transport_rl')\nCHECKPOINT = ROOT / 'runs/pose_warp_colab_verification_20261008_final/relocated_results/baseline/pose.pt'\nVIDEO = ROOT / 'docs/figures/warp_pose_diagonal_25fps.mp4'\nREPORT = ROOT / 'docs/results/warp_video_25fps_20261008.json'\nSEED = 84000\n\ndef main():\n    torch.set_num_threads(1)\n    actor, _, saved = load_mappo(CHECKPOINT, device='cuda:0')\n    cfg = PosePushConfig(**saved['pose_config'])\n    native = PosePushEnv(cfg)\n    _, initial = native.reset(seed=SEED)\n    initial_qpos = native.core.data.qpos.copy()\n    initial_qvel = native.core.data.qvel.copy()\n    goal = native.core.goal.copy()\n    goal_yaw = native.core.goal_yaw\n\n    # Only graph construction is instrumented. Replay copies states at 25 Hz;\n    # no extra forward/step calls, changed controls, or interpolated images.\n    original_step = mjw.step\n    history = {}\n    ticks = 0\n    def record_step(model, data):\n        nonlocal ticks\n        original_step(model, data)\n        if not history:\n            history['qpos_view'] = wp.to_torch(data.qpos)\n            history['qvel_view'] = wp.to_torch(data.qvel)\n            for key in ('qpos', 'qvel'):\n                view = history[key + '_view']\n                history[key] = torch.empty((cfg.high_level_decimation, view.shape[-1]), device=view.device, dtype=view.dtype)\n        ticks += 1\n        if ticks % PHYSICS_STEPS == 0:\n            frame = (ticks // PHYSICS_STEPS - 1) % cfg.high_level_decimation\n            for key in ('qpos', 'qvel'):\n                history[key][frame].copy_(history[key + '_view'][0])\n    mjw.step = record_step\n    try:\n        env = TorchRLTransportEnv(cfg, num_envs=1, backend='warp')\n    finally:\n        mjw.step = original_step\n    control = TorchRLTransportEnv(cfg, num_envs=1, backend='warp')\n\n    def reset_identically(sim):\n        sim.reset()\n        w = sim.worlds\n        w.physics.qpos[0].copy_(torch.as_tensor(initial_qpos, dtype=torch.float32, device=sim.device))\n        w.physics.qvel[0].copy_(torch.as_tensor(initial_qvel, dtype=torch.float32, device=sim.device))\n        w.goal[0].copy_(torch.as_tensor(goal, dtype=torch.float32, device=sim.device))\n        w.goal_yaw[0] = goal_yaw\n        w.physics.forward()\n\n    def action(sim):\n        td = TensorDict({'agents': {'observation': sim.worlds.observe()}}, batch_size=[1], device=sim.device)\n        with torch.no_grad():\n            return actor.get_dist(td).deterministic_sample\n\n    # Verify snapshots do not affect the trajectory, walking memory, or contacts.\n    reset_identically(env)\n    reset_identically(control)\n    checks = []\n    for _ in range(3):\n        commands = action(control)\n        recorded_result = env.worlds.step(commands)\n        ordinary_result = control.worlds.step(commands)\n        for key in ('qpos', 'qvel', 'previous_action'):\n            a, b = getattr(env.worlds.physics, key), getattr(control.worlds.physics, key)\n            print(key, 'max difference', float((a-b).abs().max()), flush=True)\n            torch.testing.assert_close(a, b, atol=2e-4, rtol=2e-4)\n        for key in ('part_contact_counts', 'robot_collision_steps'):\n            assert torch.equal(getattr(env.worlds.physics.contacts, key), getattr(control.worlds.physics.contacts, key)), key\n        for a, b in zip(recorded_result[:4], ordinary_result[:4]):\n            torch.testing.assert_close(a, b, atol=2e-4, rtol=2e-4)\n        checks.append('physics, walking history, observations and reward close within atol/rtol=2e-4; identical contact counts and done')\n    control.close()\n    reset_identically(env)\n    fps = round(cfg.high_level_decimation / cfg.dt)\n    writer = imageio.get_writer(VIDEO, fps=fps)\n    writer.append_data(env.render(world=0))\n    frames = 1\n    reference = env.worlds.reference\n    started = time.perf_counter()\n    total_counts = np.zeros(3, dtype=np.int64)\n    robot_contacts = 0\n    for step in range(round(cfg.episode_seconds / cfg.dt)):\n        _, _, terminated, truncated, info = env.worlds.step(action(env))\n        qpos = history['qpos'].cpu().numpy()\n        qvel = history['qvel'].cpu().numpy()\n        for frame in range(cfg.high_level_decimation):\n            reference.core.data.qpos[:] = qpos[frame]\n            reference.core.data.qvel[:] = qvel[frame]\n            mujoco.mj_forward(reference.core.model, reference.core.data)\n            writer.append_data(reference.render())\n            frames += 1\n        total_counts += env.worlds.physics.contacts.part_contact_counts[0].sum(-1).cpu().numpy().astype(np.int64)\n        robot_contacts += int(env.worlds.physics.contacts.robot_collision_steps[0])\n        if (step + 1) % 10 == 0:\n            print(f'{frames} frames rendered ({(step + 1) * cfg.dt:.1f} simulated seconds)', flush=True)\n        if bool((terminated | truncated)[0]):\n            break\n    env.worlds.physics.check()\n    writer.close()\n    result = {\n        'video': str(VIDEO.relative_to(ROOT)), 'fps': fps, 'frames': frames,\n        'simulated_seconds': (step + 1) * cfg.dt, 'encoded_seconds': frames / fps,\n        'seed': SEED, 'checkpoint_sha256': hashlib.sha256(CHECKPOINT.read_bytes()).hexdigest(),\n        'initial_yaw_error_degrees': float(np.rad2deg(initial['yaw_error'])),\n        'success': bool(info['is_success'][0]), 'distance_m': float(info['distance'][0]),\n        'robot_fall': bool(info['robot_fall'][0]), 'cargo_fall': bool(info['cargo_fall'][0]),\n        'body_contact_ticks': int(total_counts[0]), 'leg_contact_ticks': int(total_counts[1]),\n        'foot_contact_ticks': int(total_counts[2]), 'robot_contact_ticks': robot_contacts,\n        'recording_wall_seconds': time.perf_counter() - started,\n        'verification': checks,\n        'recording': 'Actual qpos/qvel copied after every 8 unchanged 200 Hz physics steps, rendered at 25 Hz. Actor still runs at 5 Hz. No duplicated/interpolated frames or speed change.',\n        'script': Path(__file__).read_text(),\n    }\n    REPORT.write_text(json.dumps(result, indent=2) + '\\n')\n    env.close()\n    native.close()\n    print({k: v for k, v in result.items() if k != 'script'}, flush=True)\n\nif __name__ == '__main__':\n    main()\n",
+  "video_verification": {
+    "decoded_frames": 226,
+    "fps": 25.0,
+    "duration_seconds": 9.04,
+    "size": [
+      640,
+      480
+    ],
+    "distinct_adjacent_pairs": 225,
+    "minimum_mean_pixel_change": 0.15954644097222223
+  },
+  "maximum_absolute_recording_vs_ordinary_error_three_steps": {
+    "qpos": 5.617737770080566e-06,
+    "qvel": 8.511543273925781e-05,
+    "previous_action": 1.8477439880371094e-05
+  },
+  "numerical_note": "Extra GPU copy operations can alter floating-point scheduling. Short verification stays close; the successful rerecording settles at 9.0 simulated seconds versus the earlier 8.6. Both videos play at real simulation speed."
+}
