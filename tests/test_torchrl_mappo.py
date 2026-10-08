@@ -341,3 +341,24 @@ def test_four_robot_pushing_connects_to_torchrl_mappo():
     assert torch.isfinite(objective)
     assert any(param.grad is not None for param in actor.parameters())
     collector.shutdown()
+
+
+def test_backend_auto_keeps_native_api_when_cuda_is_unavailable(monkeypatch):
+    from hexapod_transport_rl import PosePushConfig
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    env = TorchRLTransportEnv(
+        PosePushConfig(episode_seconds=0.2),
+        num_envs=2,
+        backend="auto",
+        asynchronous=False,
+    )
+    try:
+        assert env.backend == "cpu" and env.device.type == "cpu"
+        observation = env.reset()
+        observation["agents", "action"] = torch.zeros(2, 2, 3)
+        transition = env.step(observation)
+        assert bool(transition["next", "truncated"].all())
+        env.check_physics()
+    finally:
+        env.close()

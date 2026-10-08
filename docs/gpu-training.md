@@ -1,4 +1,7 @@
-# ColabのGPUでMAPPOを更新する
+# CPU物理・GPU更新の過去の測定
+
+これは2026年10月7日の構成・結果です。現在の教材は[MuJoCo Warp版](warp-training.md)を使います。
+以下に述べるCPU/GPUの分担は当時のものです。
 
 Colabの「ランタイム → ランタイムのタイプを変更」でT4 GPUを選びます。
 準備セルはインストール済みのCUDA対応PyTorchを維持します。

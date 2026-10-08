@@ -1,7 +1,7 @@
 # Colabで報酬設計を比較する
 
 [学生用Colab](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_colab.ipynb)を開き、「ランタイム → ランタイムのタイプを変更」で **T4 GPU** を選び、上から実行します。
-GPUが利用できればMAPPOの学習更新へ自動で使い、利用できなければCPUへ切り替えます。準備セルと学習セルが実際の学習先を表示します。
+GPUが利用できればMuJoCo Warp・固定歩行モデル・MAPPOへ使い、利用できなければCPUへ切り替えます。準備セルと学習セルが実際の学習先を表示します。
 GitHubの認証は不要です。既に取得したコードは学生の編集を残すため上書きしません。
 古い教材を使っている場合は、新規ランタイムで始めてください。
 
@@ -16,17 +16,20 @@ GitHubの認証は不要です。既に取得したコードは学生の編集�
 3つの段階を別seedの6試行で検証し、50%以上かつ各段階25ロールアウト以上で進めます。
 難度の変更は次のresetにだけ適用し、途中の物理状態は変えません。
 
-学習は65,536チームステップ／条件、2世界並列、horizon 128、ミニバッチ128、4 epochs、学習率3e-4です。
+GPUの標準は131,072チームステップ／条件、64世界並列、horizon 16です。
+CPUでは65,536、2世界、horizon 128です。ミニバッチはGPUで256・CPUで128、4 epochs・学習率3e-4は共通です。
+GPUでは1回の収集量を1,024ステップとし、128回の収集・更新を行います。
 学習時間は実行時のCSVを確認します。[測定記録](pose-task.md)に実験条件と結果があります。
 256ステップに減らす場合は接続確認だけで、成功する学習とは区別します。
 criticの価値正規化と、探索ノイズ上限を約0.37から0.05へ下げる設定を使います。
 ノイズの変更はPPO更新後・次の収集前に行い、actorが学ぶ行動の平均を変更しません。
-MuJoCoの物理計算とCollectorの方策実行はCPU、actor・criticの学習、GAE、ミニバッチはGPUに置きます。
-経験はロールアウトごとにまとめてGPUへ送り、更新後にCollectorのCPU方策へ重みを戻します。
-価値正規化の統計もGPUへ移します。GPUによるMuJoCoの高速化は組み込んでいません。
-物理計算が全体の多くを占めるため、小さなネットワークではGPUを選んでも必ず速くなるとは限りません。
-学習中は描画せず、評価時にだけ録画します。
-[CPU/GPUの分担と時間の比較](gpu-training.md)に実測条件を記録しています。
+GPUでは物理計算・モーター制御・固定歩行モデル・接触計測・観測・報酬・Collectorの方策をGPUで実行します。
+actor・criticの学習、GAE、ミニバッチもGPU内で完結します。CPU環境ではCPUで収集します。
+最初はGPUカーネルをコンパイルし、毎回の高位ステップをCUDA graphで実行します。
+報酬はCPUとGPUの共通式です。GPUの物理演算はfloat32なのでCPUの軌跡と完全には一致しません。
+カリキュラム検証は2世界までのCPU環境、最終評価・録画は通常のGym APIです。
+学習中は描画せず、実際のGPU状態を確認するときだけ `envs.render(world=0)` を呼びます。
+[構成・計測条件・制約](warp-training.md)に詳細があります。
 
 両条件は同じ初期重み・seed・物理・学習量・段階移行の規則を使います。
 角度の補助報酬だけを0にし、角度の成功判定は共通に残します。
@@ -75,7 +78,10 @@ loss = make_mappo_loss(
 )
 optimizer = torch.optim.Adam(loss.parameters(), lr=settings.learning_rate)
 optimizer.load_state_dict(saved["optimizer"])
-envs = TorchRLTransportEnv(config, num_envs=saved["training"]["num_envs"])
+envs = TorchRLTransportEnv(
+    config, num_envs=saved["training"]["num_envs"],
+    backend=saved["training"].get("physics_backend", "cpu"),
+)
 envs.set_seed(saved["training"]["seed"])
 curriculum = PoseCurriculum(
     config, envs, actor, "runs/pose_continued",

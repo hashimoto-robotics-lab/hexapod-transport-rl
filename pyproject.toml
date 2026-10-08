@@ -17,6 +17,9 @@ dependencies = [
     "tensordict==0.14.2",
 ]
 
+[project.optional-dependencies]
+warp = ["mujoco-warp==3.11.0", "warp-lang==1.15.0"]
+
 [project.scripts]
 hexapod-transport = "hexapod_transport_rl.cli:main"
 

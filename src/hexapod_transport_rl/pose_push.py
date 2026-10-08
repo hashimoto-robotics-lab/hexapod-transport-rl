@@ -18,6 +18,7 @@ from .api import HexapodPushEnv
 from .config import COMMAND_LIMIT, PushConfig, rotation, wrap
 from .contacts import BODY
 from .env import PushEnv
+from .pose_rewards import pose_reward_terms
 from .rewards import PoseRewardWeights
 
 POSE_ENV_ID = "HexapodPosePush-v0"
@@ -218,52 +219,22 @@ class PosePhysics(PushEnv):
         return info
 
     def _reward_terms(self, before, info, previous_approach, commands):
-        weights = self.cfg.reward_weights
-        gamma = self.cfg.shaping_discount
-        # A true terminal state has zero potential. Timeouts retain final-state
-        # potential because GAE bootstraps their unreset final observations.
-        terminal = info["success"] or info["failed"]
-        position_after = 0.0 if terminal else info["distance"] / 0.5
-        yaw_after = 0.0 if terminal else info["yaw_error"] / 0.5
-        approach_after = 0.0 if terminal else self._mean_approach_distance() / 0.5
-        near = np.exp(
-            -((info["distance"] / (0.75 * self.cfg.position_tolerance)) ** 2)
-            - (info["yaw_error"] / (0.75 * self.cfg.yaw_tolerance)) ** 2
+        before = {**before, "approach": previous_approach}
+        after = {**info, "approach": self._mean_approach_distance()}
+        terms = pose_reward_terms(
+            self.cfg,
+            before,
+            after,
+            commands,
+            self.last_commands,
+            COMMAND_LIMIT,
+            self.contacts.part_contact_counts[BODY],
+            self.contacts.robot_collision_steps,
+            self.cfg.position_tolerance,
+            self.cfg.yaw_tolerance,
+            math=np,
         )
-        motion = (
-            info["cargo_speed"] / COMMAND_LIMIT[0]
-            + info["cargo_yaw_speed"] / COMMAND_LIMIT[2]
-        )
-        physics_steps = round(self.cfg.dt / 0.005)
-        return dict(
-            position=weights.position
-            * (before["distance"] / 0.5 - gamma * position_after),
-            position_error=-weights.position_error
-            * self.cfg.dt
-            * info["distance"]
-            / 0.5,
-            orientation=weights.orientation
-            * (before["yaw_error"] / 0.5 - gamma * yaw_after),
-            approach=weights.approach
-            * (previous_approach / 0.5 - gamma * approach_after),
-            settling=-weights.settling * self.cfg.dt * near * motion,
-            command_change=-weights.command_change
-            * float(np.mean(((commands - self.last_commands) / COMMAND_LIMIT) ** 2)),
-            time=-weights.time * self.cfg.dt,
-            robot_contact=-weights.robot_contact
-            * self.cfg.dt
-            * self.contacts.robot_collision_steps
-            / physics_steps,
-            body_contact=-weights.body_contact
-            * self.cfg.dt
-            * float(self.contacts.part_contact_counts[BODY].mean())
-            / physics_steps,
-            terminal=weights.success
-            if info["success"]
-            else weights.failure
-            if info["failed"]
-            else 0.0,
-        )
+        return {key: float(value) for key, value in terms.items()}
 
 
 class PosePushEnv(HexapodPushEnv):

@@ -23,7 +23,7 @@
 | 変更 | 定義 |
 |---|---|
 | 報酬係数 | `PoseRewardWeights`とノートブックの`replace()` |
-| 報酬の式 | `PosePhysics._reward_terms()` |
+| 報酬の式 | `pose_rewards.py`の`pose_reward_terms()`（CPU・GPU共通） |
 | 初期角度・距離・精度 | `PosePushConfig`・`POSE_STAGES` |
 | 観測と左右の座標変換 | `observe_pose()`・`PosePushEnv.step()` |
 | 学習率・更新回数・PPO clip | `MAPPOSettings` |
@@ -31,7 +31,7 @@
 | 比較する比例制御 | `rule_action()`、評価専用 |
 | Tの等長形状と質量配分 | `model.py`の`_add_cargo()` |
 
-ノートブックの標準は2台・65,536チームステップ／条件です。
+ノートブックの標準は2台、GPUで131,072／CPUで65,536チームステップ／条件です。
 同じ初期重みと学習量で角度の補助報酬の有無を比較します。
 物理の外力やデモの行動は与えません。精度に達するまでの学習時間も評価項目です。
 
@@ -41,6 +41,12 @@
 `env.py`は物理の更新・接触計測・終了判定、`model.py`は機体の複製・床・T・目標を作ります。
 `locomotion.py`は固定歩行モデルとモーター、`contacts.py`は胴体・脚リンク・足の接触力積を扱います。
 ロボット・歩行の資産は`assets`に同梱しています。
+
+GPU用の詳細を読む場合は `warp_pose.py`（並列reset・観測・終了判定）、
+`warp_physics.py`（歩行・元のDCモーター・CUDA graph）、
+`warp_contacts.py`（各物理ステップの接触・力積）の順です。
+`pose_rewards.py`の式と`PoseRewardWeights`はCPU・GPU双方が使います。
+学生が報酬係数を変える場合、Warpカーネルの編集は必要ありません。
 
 `approach.py`・`approach_training.py`・`handover_training.py`・`mappo.py`は旧形状で学習した歴史的なモデルの再生・再学習用です。
 新しい姿勢運搬の学習ループはこれらを使いません。

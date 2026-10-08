@@ -124,13 +124,19 @@ from hexapod_transport_rl import (
     TorchRLTransportEnv, MAPPOSettings, make_mappo_networks, make_mappo_loss,
 )
 
-envs = TorchRLTransportEnv(config=config, num_envs=2)
+envs = TorchRLTransportEnv(config=config, num_envs=64, backend="auto")
 actor, critic = make_mappo_networks(envs.num_robots, envs.obs_dim)
 loss = make_mappo_loss(actor, critic, MAPPOSettings())
 envs.close()
 ```
 
 学習の収集・GAE・更新ループはノートブックにあります。`num_envs`は独立した世界数です。
+`backend="auto"` はNVIDIA CUDAでMuJoCo Warp、GPUがないときはCPUです。
+明示指定は `backend="warp"` または `backend="cpu"`。省略時は既存コードとの互換性のためCPUです。
+Warpは現在 `PosePushConfig` に対応し、観測・指令・固定歩行・接触・報酬をGPUに保持します。
+Collectorの `env_device`・`policy_device`・`storing_device` は `envs.device` を指定します。
+終了時の観測を保持し、リセットしたレーンだけ新しい難度と歩行履歴を初期化します。
+`envs.check_physics()` は収集後のバッファ不足・非有限値検査、`envs.render(world=0)` は実際のGPU状態のRGB描画です。
 actorは局所観測、criticは全機の観測を使います。報酬はチームで共有し、PPOの確率比は機体別です。
 `PoseCurriculum`は検証・reset段階・ログを管理し、学習経験や行動を与えません。
 `save_mappo()`はpose方策の場合、別の押すcheckpointを必要としません。

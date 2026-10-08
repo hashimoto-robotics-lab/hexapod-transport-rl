@@ -48,7 +48,8 @@ APIは2〜4台を扱えますが、以下の実測・参考モデルは2台の�
         r"""## 1. 教材と実行環境を準備する
 公開GitHubから取得します。認証は不要です。次の2セルはそのまま実行します。
 Colabの「ランタイム → ランタイムのタイプを変更」で **T4 GPU** を選びます。
-GPUが使えるとMAPPOの学習更新に自動で使い、使えない場合はCPUで実行します。
+GPUが使えると、MuJoCo Warpによる物理計算・歩行モデル・MAPPOをGPUで実行します。
+GPUが使えない場合は従来のCPU環境で実行します。最初はGPU用カーネルのコンパイルに時間がかかります。
 既に取得したコードがある場合は、学生の編集を残すため再取得しません。新しい教材を使うときは新規ランタイムで始めます。
 """,
     ),
@@ -263,10 +264,13 @@ for name, config in conditions.items():
 | transport | 0.4 m | ±5〜30度 | 8 cm・5度・0.6秒 |
 | settle | 0.4 m | ±5〜30度 | 8 cm・5度・1秒 |
 
-学習量は**65,536チームステップ／条件**を初期値にします。学習時間は後のCSVで実測します。
+GPUでは**131,072チームステップ／条件**、CPUでは65,536を初期値にします。学習時間は後のCSVで実測します。
 前の整列課題と違い、今回は押す・回転・停止を含めて新しく学習するので、前の成功率や時間は保証しません。
-学習中に描画せず、2並列のCPUシミュレーションを使います。MAPPOの学習更新には利用可能なGPUを使います。
-MuJoCoの物理計算はCPUなので、GPUを選んでも全体が同じ倍率で速くなるわけではありません。
+学習中に描画せず、GPUでは64並列の世界をMuJoCo Warpで進めます。
+固定歩行モデル、モーター制御、接触計測、観測・報酬もGPU上で計算します。
+1回の収集量を1,024チームステップに揃え、並列化しても十分な回数の方策更新を行います。
+CPUへの切り替え時は2並列です。カリキュラム検証と保存モデルの評価・動画はCPUで行い、
+GPUで学んだ方策が通常のGym環境でも動くかを確認します。T4での速度は実行ログから測ってください。
 
 1チームステップは全機のいる世界を1回進めることです。`NUM_ENVS` はロボット台数ではなく並列世界数です。
 `TRAINING_STEPS` は `NUM_ENVS * HORIZON` の倍数で指定します。256ステップへの縮小はAPI接続確認用です。
@@ -279,9 +283,12 @@ MuJoCoの物理計算はCPUなので、GPUを選んでも全体が同じ倍率�
 
 EXPERIMENT_NAME = "pose_reward_trial_01"
 TRAINING_SEED = 20261010
-NUM_ENVS = 2
-HORIZON = 128
-TRAINING_STEPS = 65536
+import torch
+
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+NUM_ENVS = 64 if DEVICE.type == "cuda" else 2
+HORIZON = 16 if DEVICE.type == "cuda" else 128
+TRAINING_STEPS = 131072 if DEVICE.type == "cuda" else 65536
 
 RUN_DIR = create_experiment(PROJECT_DIR, EXPERIMENT_NAME)
 print("1条件あたりの収集量:", TRAINING_STEPS, "チームステップ")
@@ -311,7 +318,9 @@ media.show_video(iio.imread(next((RUN_DIR / "reference_video").glob("*.mp4"))), 
     (
         "markdown",
         r"""### 経験を収集し、MAPPOで更新する
-`TorchRLTransportEnv` は先ほどのGymnasium環境をTorchRLへ接続します。物理と報酬は同じです。
+`TorchRLTransportEnv` は先ほどのGymnasium環境と同じ課題をTorchRLへ接続します。
+`backend="auto"` はCUDAがあればWarp、なければCPUを選びます。
+機体・T・DCモーター・歩行モデル・報酬式は共通ですが、GPUの物理演算はfloat32で、CPUの軌跡と完全には一致しません。
 名前付き配列を `TensorDict` にまとめ、観測は `(並列世界, 時間, ロボット, 観測成分)` となります。
 `make_mappo_networks()` は共有actor・中央critic、`make_mappo_loss()` はTorchRLの `MAPPOLoss` とGAEを設定します。
 観測と行動のロボット軸を保って更新します。価値正規化でcriticの更新尺度を揃えます。
@@ -323,9 +332,10 @@ media.show_video(iio.imread(next((RUN_DIR / "reference_video").glob("*.mp4"))), 
 正規化行動の標準偏差の上限は約0.37から0.05になります。行動の平均は常にactorが学びます。
 `PoseCurriculum` は検証・難度の変更・ログだけを行い、行動を作ったりPPO更新を代行したりしません。
 `DEVICE` は学習先です。actor・critic・GAE・損失計算をGPUへ置きます。
-CollectorはCPU上の方策でMuJoCoを進め、収集した経験をまとめてGPUへ送ります。
+Collectorも `envs.device` で方策を実行・収集し、WarpではGPU内で経験を受け渡します。
 更新後は `update_policy_weights_()` で、登録済みactorの最新の重みをCollectorへ戻します。
-この分担で、物理計算の1ステップごとにGPUへデータを往復させずに済みます。
+CPU環境ではCPUで収集してから学習先へ転送します。物理計算の各ステップでCPUとGPUを往復しません。
+接触バッファの不足や非有限値はロールアウトごとにライブラリが確認します。
 保存する `.pt` には重み・optimizer・価値正規化の統計・報酬・到達段階・乱数状態が入ります。別の押すモデルは必要ありません。
 """,
     ),
@@ -340,17 +350,17 @@ from hexapod_transport_rl import (
 )
 
 settings = MAPPOSettings(
-    learning_rate=3e-4, minibatch_size=128, value_normalization=True,
+    learning_rate=3e-4, minibatch_size=256 if DEVICE.type == "cuda" else 128, value_normalization=True,
     entropy_coeff=0.001, final_log_std=-3.0,
 )
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print("MAPPOの学習更新:", DEVICE, "/ MuJoCoの物理計算: cpu")
+print("学習先:", DEVICE)
 FRAMES_PER_BATCH = NUM_ENVS * HORIZON
 models = {}
 for name, config in conditions.items():
     torch.manual_seed(TRAINING_SEED)
     output = RUN_DIR / name
-    envs = TorchRLTransportEnv(config=config, num_envs=NUM_ENVS)
+    envs = TorchRLTransportEnv(config=config, num_envs=NUM_ENVS, backend="auto")
+    print(name, "物理計算:", envs.backend, envs.device)
     envs.set_seed(TRAINING_SEED)
     actor, critic = make_mappo_networks(num_robots=envs.num_robots, obs_dim=envs.obs_dim)
     actor.to(DEVICE)
@@ -368,7 +378,7 @@ for name, config in conditions.items():
     )
     collector = Collector(
         envs, actor, frames_per_batch=FRAMES_PER_BATCH, total_frames=TRAINING_STEPS,
-        env_device="cpu", policy_device="cpu", storing_device="cpu",
+        env_device=envs.device, policy_device=envs.device, storing_device=envs.device,
         auto_register_policy_transforms=True,
     )
     buffer = ReplayBuffer(
@@ -446,7 +456,7 @@ for name in conditions:
     display(log.tail(3))
     speed = log["team_steps_per_second"].iloc[-1]
     print(name, "実際の学習時間:", round(log["elapsed_seconds"].iloc[-1] / 60, 2), "分/条件")
-    print("65536ステップの概算:", round(65536 / speed / 60, 2), "分/条件")
+    print("設定した学習量の概算:", round(TRAINING_STEPS / speed / 60, 2), "分/条件")
 """,
     ),
     (
@@ -473,12 +483,12 @@ reports = {}
 for name, checkpoint in models.items():
     reports[name] = evaluate_pose(
         checkpoint, config=baseline_config, episodes=EVALUATION_EPISODES,
-        seed=TEST_SEED, workers=NUM_ENVS, output=RUN_DIR / "evaluation" / f"{name}.json",
+        seed=TEST_SEED, workers=2, output=RUN_DIR / "evaluation" / f"{name}.json",
     )
 for policy in ("forward", "feedback"):
     reports[policy] = evaluate_pose(
         config=baseline_config, policy=policy, episodes=EVALUATION_EPISODES,
-        seed=TEST_SEED, workers=NUM_ENVS, output=RUN_DIR / "evaluation" / f"{policy}.json",
+        seed=TEST_SEED, workers=2, output=RUN_DIR / "evaluation" / f"{policy}.json",
     )
 """,
     ),

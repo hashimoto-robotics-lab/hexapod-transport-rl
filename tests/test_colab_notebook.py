@@ -150,5 +150,7 @@ def test_reward_parameters_flow_directly_to_training_and_paired_evaluation():
     assert "actor.to(DEVICE)" in source and "critic.to(DEVICE)" in source
     assert "batch = batch.to(DEVICE)" in source
     assert "LazyTensorStorage(FRAMES_PER_BATCH, device=DEVICE)" in source
-    assert 'policy_device="cpu"' in source
+    assert "policy_device=envs.device" in source
+    assert 'backend="auto"' in source
+    assert "NUM_ENVS = 64" in source
     assert "collector.update_policy_weights_()" in source

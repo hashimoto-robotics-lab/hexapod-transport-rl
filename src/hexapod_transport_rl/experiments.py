@@ -53,6 +53,11 @@ def create_experiment(project_dir: str | Path, name: str) -> Path:
             )
         },
     )
+    for name in ("mujoco-warp", "warp-lang"):
+        try:
+            record["packages"][name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            pass
     (output / "experiment.json").write_text(json.dumps(record, indent=2) + "\n")
     return output
 

@@ -67,7 +67,8 @@ class PoseCurriculum:
                 if next(actor.parameters()).is_cuda
                 else None
             ),
-            physics_device="cpu",
+            physics_device=str(env.device),
+            physics_backend=env.backend,
             seed=seed,
             num_envs=env.worlds.num_envs,
             horizon=horizon,
@@ -82,6 +83,18 @@ class PoseCurriculum:
             validation_seed_start=62000,
             validation_seed_stride=1000,
         )
+        if env.backend == "warp":
+            import mujoco_warp
+            import warp
+
+            self.training.update(
+                mujoco_warp=mujoco_warp.__version__,
+                warp=warp.__version__,
+                physics_compile_seconds=env.worlds.physics.compile_seconds,
+                contact_capacity=env.worlds.physics.data.naconmax,
+                constraint_capacity_per_world=env.worlds.physics.data.njmax,
+                reset_rng="torch CUDA; uniform reset ranges match native MuJoCo",
+            )
         if resume:
             if (
                 PosePushConfig(**resume["pose_config"]) != config
@@ -124,9 +137,9 @@ class PoseCurriculum:
         if self.validation_env is None:
             self.validation_env = make_pose_vector(
                 self.config,
-                self.env.worlds.num_envs,
+                min(2, self.validation_episodes),
                 self.env.provenance["asset_root"],
-                asynchronous=self.env.asynchronous,
+                asynchronous=self.env.asynchronous or self.env.backend == "warp",
             )
         self.validation_env.call("set_stage", self.stages[self.level])
         successes = []
@@ -147,6 +160,7 @@ class PoseCurriculum:
         return float(np.mean(successes))
 
     def record(self, batch, metrics):
+        self.env.check_physics()
         self.rollouts += 1
         self.transitions += batch.numel()
         collected = self.stages[self.level].name
