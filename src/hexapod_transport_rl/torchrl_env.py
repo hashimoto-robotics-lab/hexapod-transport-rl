@@ -13,6 +13,7 @@ from torchrl.envs import EnvBase
 
 from .approach import ApproachConfig, make_approach_vector
 from .config import PushConfig
+from .navigation import NavigationConfig, make_navigation_vector
 from .pose_push import PosePushConfig, make_pose_vector
 from .vector import make_vector_env
 
@@ -22,6 +23,7 @@ class TorchRLTransportEnv(EnvBase):
 
     ``config=PosePushConfig(...)`` selects target-pose pushing (two to four robots).
     ``PushConfig`` selects basic pushing; ``ApproachConfig`` is historical navigation.
+    ``NavigationConfig`` selects cooperative crossing without cargo.
     ``num_envs`` counts independent worlds, not robots.
     ``backend="auto"`` selects Warp with CUDA, otherwise native CPU MuJoCo.
     Warp keeps observations, commands, walking and rewards on the GPU.
@@ -29,7 +31,7 @@ class TorchRLTransportEnv(EnvBase):
 
     def __init__(
         self,
-        config: ApproachConfig | PushConfig,
+        config: ApproachConfig | PushConfig | NavigationConfig,
         num_envs: int = 2,
         *,
         asynchronous: bool = True,
@@ -52,7 +54,17 @@ class TorchRLTransportEnv(EnvBase):
         if backend == "cpu" and device.type != "cpu":
             raise ValueError("Native MuJoCo worlds use device=cpu")
         super().__init__(device=device, batch_size=[num_envs])
-        if backend == "warp":
+        if isinstance(config, NavigationConfig):
+            if backend == "warp":
+                from .warp_navigation import WarpNavigationWorlds
+
+                self.worlds = WarpNavigationWorlds(config, num_envs, asset_root, device)
+                asynchronous = False
+            else:
+                self.worlds = make_navigation_vector(
+                    config, num_envs, asynchronous=asynchronous
+                )
+        elif backend == "warp":
             if not isinstance(config, PosePushConfig):
                 raise TypeError("Warp currently supports PosePushConfig")
             from .warp_pose import WarpPoseWorlds
@@ -92,6 +104,8 @@ class TorchRLTransportEnv(EnvBase):
             if getattr(config, "task_type", None) == "pusht"
             else ()
         )
+        if isinstance(config, NavigationConfig):
+            self.metric_names = ("distance", "min_separation")
         self.provenance = self.worlds.call("provenance")[0]
         self._reset_seed = None
         self.observation_spec = Composite(

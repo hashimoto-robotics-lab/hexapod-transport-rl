@@ -17,6 +17,13 @@ def evaluate_mappo(checkpoint, *, episodes=8, seed=98000, video=True, backend="a
     """
     started = time.monotonic()
     checkpoint = Path(checkpoint)
+    saved = torch.load(checkpoint, weights_only=True, map_location="cpu")
+    if saved.get("format") == "hexapod-navigation-torchrl-mappo-v1":
+        from .navigation_evaluation import evaluate_navigation
+
+        return evaluate_navigation(
+            checkpoint, episodes=episodes, seed=seed, video=video, backend=backend
+        )
     output = checkpoint.parent
     if backend == "auto":
         backend = "warp" if torch.cuda.is_available() else "cpu"

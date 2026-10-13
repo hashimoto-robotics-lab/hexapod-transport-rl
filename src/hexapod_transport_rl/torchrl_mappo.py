@@ -27,12 +27,14 @@ from torchrl.objectives import MAPPOLoss
 from .approach import ApproachConfig
 from .config import PushConfig
 from .mappo import load_checkpoint
+from .navigation import NavigationConfig
 from .pose_push import PosePushConfig
 from .velocity_distribution import VelocityDistribution
 
 FORMAT = "hexapod-approach-torchrl-mappo-v1"
 POSE_FORMAT = "hexapod-pose-push-torchrl-mappo-v1"
 PUSHT_FORMAT = "hexapod-pusht-torchrl-mappo-v1"
+NAVIGATION_FORMAT = "hexapod-navigation-torchrl-mappo-v1"
 NETWORK = dict(hidden_units=[128, 128], initial_log_std=-1.0)
 
 
@@ -380,7 +382,7 @@ def save_mappo(
     critic,
     optimizer,
     *,
-    config: ApproachConfig | PosePushConfig,
+    config: ApproachConfig | PosePushConfig | NavigationConfig,
     pushing_checkpoint: str | Path | None = None,
     provenance: dict,
     training: dict,
@@ -392,7 +394,22 @@ def save_mappo(
     normalizer = None if loss is None else loss.value_norm
     if training.get("settings", {}).get("value_normalization") and normalizer is None:
         raise ValueError("Pass loss to save its value normalizer for resuming")
-    if isinstance(config, PosePushConfig):
+    if isinstance(config, NavigationConfig):
+        if NavigationConfig.from_checkpoint(provenance["navigation_config"]) != config:
+            raise ValueError("Saved navigation config differs from the training world")
+        extra = dict(navigation_config=asdict(config))
+        if (actor.action_dim, actor.action_low, actor.action_high) != (3, -1, 1) or (
+            getattr(actor, "position_index", None) is not None
+        ):
+            raise ValueError(
+                "Navigation checkpoint requires normalized body velocities"
+            )
+        file_format, num_robots, obs_dim = (
+            NAVIGATION_FORMAT,
+            config.num_robots,
+            config.observation_dim,
+        )
+    elif isinstance(config, PosePushConfig):
         if PosePushConfig.from_checkpoint(provenance["pose_config"]) != config:
             raise ValueError("Saved pose config differs from the training world")
         extra = dict(pose_config=asdict(config))
@@ -507,7 +524,17 @@ def load_mappo(path: str | Path, *, device="cpu"):
         )
     } != {"hidden_units": NETWORK["hidden_units"]}:
         raise ValueError("Unrecognized TorchRL network architecture")
-    if saved.get("format") == PUSHT_FORMAT:
+    if saved.get("format") == NAVIGATION_FORMAT:
+        config = NavigationConfig.from_checkpoint(saved["navigation_config"])
+        if (
+            saved.get("num_robots") != config.num_robots
+            or saved.get("obs_dim") != config.observation_dim
+            or network.get("action_dim", 3) != 3
+            or (network.get("action_low", -1), network.get("action_high", 1)) != (-1, 1)
+            or network.get("position_index") is not None
+        ):
+            raise ValueError("Navigation checkpoint has an inconsistent layout")
+    elif saved.get("format") == PUSHT_FORMAT:
         config = PosePushConfig.from_checkpoint(saved["pose_config"])
         if (
             getattr(config, "task_type", None) != "pusht"

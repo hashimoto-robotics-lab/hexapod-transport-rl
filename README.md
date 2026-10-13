@@ -1,27 +1,40 @@
 # Hexapod Transport RL
 
-六足ロボットによる協調運搬を、TorchRLのMAPPOで調べる卒業研究向け教材です。
-固定した歩行モデルへ指令を送り、運搬方策を毎回ランダムな重みから学習します。教師デモ・模倣学習は使いません。
+複数の六足ロボットの協調動作を、TorchRLのMAPPOで調べる卒業研究向け教材です。
+導入課題は **衝突を避けてすれ違う**、発展課題は **Tを協調して押す** です。
+固定した歩行モデルへ指令を送り、上位方策を毎回ランダムな重みから学習します。教師デモ・模倣学習は使いません。
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_colab.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/cooperative_navigation_colab.ipynb)
 
 ColabでT4 GPUを選び、上から実行します。公開GitHubなので認証は不要です。
 教材は **歩行コマンド → Gym API → 報酬 → 新規学習 → 評価・動画** の順です。
 1つの報酬条件ごとに、初回の準備を除いて10分以内の実験ループを目指します。
 
 ```python
-from hexapod_transport_rl import PushTConfig, PushTRewardWeights, train_mappo, evaluate_mappo
+from hexapod_transport_rl import NavigationConfig, train_mappo, evaluate_mappo
 
-config = PushTConfig(reward_weights=PushTRewardWeights(), high_level_decimation=20)
-checkpoint = train_mappo(config, "runs/coverage_01", max_seconds=360)
+config = NavigationConfig(num_robots=2)
+checkpoint = train_mappo(config, "runs/crossing_01", max_seconds=240)
 report = evaluate_mappo(checkpoint, episodes=8, seed=98000)
 ```
 
-学習は環境構築を含め360秒を目安に、ロールアウトの境界で終了します。
+学習は環境構築を含め240秒を目安に、ロールアウトの境界で終了します。
 評価と動画1本を別に計測します。初回コンパイルやGPUの混雑によって時間は変わり、厳密な10分の保証ではありません。
 保存する初期重み・Adam・価値統計は新規です。前の条件の重みを次へ渡しません。
 
-## 課題
+## 導入課題：協調すれ違い
+
+2台が向かい合って出発し、相手を避けながら反対側の目的地へ進みます。
+観測は機体座標の目標・速度・他機の状態、行動は前進・横移動・旋回の正規化コマンドです。
+目的地30 cm以内で全機が0.8秒留まると成功です。報酬で接近と安全な間隔の重視を変えられます。
+
+手元のA6000では1学習seedで **学習・16例の評価・動画まで約242秒、接触なしの成功16/16** でした。
+初期配置の向きと小さい揺らぎを変えた範囲の確認です。T4・4台・複数学習seedの性能は未確認です。
+[課題・観測・報酬の説明](docs/cooperative-navigation.md)と[両試行の実測](docs/results/navigation_experiments_20261013.json)を参照してください。
+
+## 発展課題：T押し
+
+[運搬用Colab](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_colab.ipynb)は別に残しています。
 
 | 項目 | 2台の場合 |
 |---|---|
@@ -38,7 +51,8 @@ report = evaluate_mappo(checkpoint, episodes=8, seed=98000)
 
 ## 読む場所
 
-- [Colabの実験手順](docs/colab-guide.md)：10分の予算、繰り返し、卒論での比較。
+- [導入用ColabとAPI](docs/cooperative-navigation.md)：すれ違い、報酬の比較、2〜4台。
+- [運搬の実験手順](docs/colab-guide.md)：T押しの予算、繰り返し、卒論での比較。
 - [API](docs/api.md)：歩行・XY目標・新規学習・評価。
 - [コード](docs/code-guide.md)：学生が読む6ファイル。
 - [実測と全試行](docs/results/compact_experiments_20261013.json)：時間と学習結果を分けて記録。

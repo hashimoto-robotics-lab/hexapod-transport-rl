@@ -1,4 +1,4 @@
-"""Hierarchical cooperative pushing with articulated hexapod robots."""
+"""Cooperative navigation and pushing with articulated hexapod robots."""
 
 from .api import GYM_ENV_ID, HexapodPushEnv
 from .approach import APPROACH_ENV_ID, ApproachConfig, ApproachEnv
@@ -7,6 +7,12 @@ from .approach_training import train_approach
 from .config import PushConfig
 from .env import PushEnv
 from .evaluation import evaluate_mappo
+from .navigation import (
+    NAVIGATION_ENV_ID,
+    NavigationConfig,
+    NavigationEnv,
+    NavigationRewardWeights,
+)
 from .pose_evaluation import evaluate_pose, rule_action
 from .pose_push import POSE_ENV_ID, POSE_STAGES, PosePushConfig, PosePushEnv, PoseStage
 from .pose_training import PoseCurriculum
@@ -30,6 +36,10 @@ from .walking import WalkingSimulation
 from .walking_env import WALKING_ENV_ID, WalkingEnv
 
 __all__ = [
+    "NavigationConfig",
+    "NavigationEnv",
+    "NavigationRewardWeights",
+    "NAVIGATION_ENV_ID",
     "PushTConfig",
     "train_mappo",
     "evaluate_mappo",

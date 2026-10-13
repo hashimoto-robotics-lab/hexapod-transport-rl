@@ -14,18 +14,20 @@ import torch
 from torchrl.collectors import Collector
 from torchrl.data import LazyTensorStorage, ReplayBuffer, SamplerWithoutReplacement
 
+from .navigation import NavigationConfig
 from .pusht import PushTConfig
 from .torchrl_env import TorchRLTransportEnv
 from .torchrl_mappo import (
     MAPPOSettings,
     make_mappo_loss,
+    make_mappo_networks,
     make_pusht_networks,
     save_mappo,
 )
 
 
 def train_mappo(
-    config: PushTConfig,
+    config: PushTConfig | NavigationConfig,
     output,
     *,
     seed=42,
@@ -36,15 +38,17 @@ def train_mappo(
     settings=None,
     backend="auto",
 ):
-    """Train an uninitialized transport policy and return its checkpoint path.
+    """Train a fresh high-level policy and return its checkpoint path.
 
     ``max_seconds`` includes environment construction, collection and updates.
     ``None`` disables the time limit for experiments with equal step budgets.
     Stop before starting another rollout when its estimated cost exceeds the
     remaining budget. A cold first rollout can overrun; this is not a hard timer.
     """
-    if not isinstance(config, PushTConfig):
-        raise TypeError("Current MAPPO experiments require PushTConfig")
+    if not isinstance(config, (PushTConfig, NavigationConfig)):
+        raise TypeError(
+            "Current MAPPO experiments require PushTConfig or NavigationConfig"
+        )
     if horizon < 1 or steps < 1 or (max_seconds is not None and max_seconds <= 0):
         raise ValueError("Learning budgets must be positive")
     output = Path(output)
@@ -64,7 +68,7 @@ def train_mappo(
         minibatch_size=1024,
         gamma=0.995 ** (config.dt / 0.2),
         gae_lambda=0.99 ** (config.dt / 0.2),
-        initial_log_std=-1.8,
+        initial_log_std=-1.0 if isinstance(config, NavigationConfig) else -1.8,
         value_normalization=True,
     )
     settings = replace(settings, minibatch_size=min(settings.minibatch_size, frames))
@@ -72,9 +76,17 @@ def train_mappo(
         config, num_envs=num_envs, backend=backend, asynchronous=False
     )
     env.set_seed(seed)
-    actor, critic = make_pusht_networks(
-        config, device=env.device, initial_log_std=settings.initial_log_std
-    )
+    if isinstance(config, NavigationConfig):
+        actor, critic = make_mappo_networks(
+            config.num_robots,
+            config.observation_dim,
+            initial_log_std=settings.initial_log_std,
+        )
+        actor, critic = actor.to(env.device), critic.to(env.device)
+    else:
+        actor, critic = make_pusht_networks(
+            config, device=env.device, initial_log_std=settings.initial_log_std
+        )
     loss = make_mappo_loss(actor, critic, settings)
     optimizer = torch.optim.Adam(loss.parameters(), lr=settings.learning_rate)
     metadata = dict(
@@ -126,12 +138,16 @@ def train_mappo(
     metadata["initialization_seconds"] = time.monotonic() - started
     durations = []
     rows = []
+    metric_columns = (
+        ("mean_distance_m", "mean_min_separation_m")
+        if isinstance(config, NavigationConfig)
+        else ("mean_coverage", "mean_approach_m")
+    )
     fieldnames = (
         "team_steps",
         "elapsed_seconds",
         "mean_reward",
-        "mean_coverage",
-        "mean_approach_m",
+        *metric_columns,
         "episodes",
         "successes",
     )
@@ -173,11 +189,11 @@ def train_mappo(
                 team_steps=state["transitions"],
                 elapsed_seconds=time.monotonic() - started,
                 mean_reward=float(batch["next", "reward"].mean()),
-                mean_coverage=float(batch["next", "coverage"].mean()),
-                mean_approach_m=float(batch["next", "approach"].mean()),
                 episodes=int(batch["next", "done"].sum()),
                 successes=int((batch["next", "success"] & batch["next", "done"]).sum()),
             )
+            for column, metric in zip(metric_columns, env.metric_names, strict=True):
+                row[column] = float(batch["next", metric].mean())
             rows.append(row)
             durations.append(time.monotonic() - rollout_start)
             with (output / "progress.csv").open("w", newline="") as stream:
@@ -187,7 +203,7 @@ def train_mappo(
             if state["rollouts"] % 10 == 0:
                 print(
                     f"{state['transitions']:,} steps, {row['elapsed_seconds']:.0f} s, "
-                    f"coverage {row['mean_coverage']:.3f}"
+                    f"{env.metric_names[0]} {row[metric_columns[0]]:.3f}"
                 )
         metadata.update(
             team_steps=state["transitions"],
@@ -197,7 +213,9 @@ def train_mappo(
             if state["transitions"] >= steps // frames * frames
             else "time_budget",
         )
-        checkpoint = save("pusht.pt")
+        checkpoint = save(
+            "navigation.pt" if isinstance(config, NavigationConfig) else "pusht.pt"
+        )
         (output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
         print(f"Saved {checkpoint}: {state['transitions']:,} steps")
         return checkpoint
