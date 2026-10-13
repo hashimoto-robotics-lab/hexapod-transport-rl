@@ -20,6 +20,8 @@ class WarpPhysics:
     """One compiled MuJoCo model and independent GPU states for every world."""
 
     def __init__(self, reference, num_worlds, device):
+        if wp.config.log_level == wp.LOG_INFO:
+            wp.config.log_level = wp.LOG_WARNING
         wp.init()
         self.device = torch.device(device)
         self.stream = torch.cuda.Stream(device=self.device)

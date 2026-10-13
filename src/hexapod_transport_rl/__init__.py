@@ -6,6 +6,7 @@ from .approach_evaluation import evaluate as evaluate_transport
 from .approach_training import train_approach
 from .config import PushConfig
 from .env import PushEnv
+from .evaluation import evaluate_mappo
 from .pose_evaluation import evaluate_pose, rule_action
 from .pose_push import POSE_ENV_ID, POSE_STAGES, PosePushConfig, PosePushEnv, PoseStage
 from .pose_training import PoseCurriculum
@@ -18,16 +19,20 @@ from .torchrl_mappo import (
     load_mappo,
     make_mappo_loss,
     make_mappo_networks,
+    make_pusht_networks,
     policy_action,
     save_mappo,
 )
 from .torchrl_training import ApproachCurriculum
+from .training import train_mappo
 from .vector import make_vector_env
 from .walking import WalkingSimulation
 from .walking_env import WALKING_ENV_ID, WalkingEnv
 
 __all__ = [
     "PushTConfig",
+    "train_mappo",
+    "evaluate_mappo",
     "PushTEnv",
     "PushTRewardWeights",
     "PUSHT_ENV_ID",
@@ -44,6 +49,7 @@ __all__ = [
     "TorchRLTransportEnv",
     "MAPPOSettings",
     "make_mappo_networks",
+    "make_pusht_networks",
     "anneal_exploration",
     "make_mappo_loss",
     "policy_action",

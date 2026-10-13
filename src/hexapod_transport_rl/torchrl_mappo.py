@@ -137,6 +137,38 @@ class SharedScale(nn.Module):
         return loc, self.log_std.exp().expand_as(loc)
 
 
+class PositionTargetActor(nn.Module):
+    """Explore around own XY while still emitting absolute world XY targets.
+
+    The learned residual is unconstrained before tanh. Only own position centers
+    its distribution; there is no cargo-dependent action or suggested route.
+    """
+
+    def __init__(self, network, position_index, low, high, initial_log_std):
+        super().__init__()
+        self.network = network
+        self.scale = SharedScale(initial_log_std, 2)
+        self.position_index = position_index
+        self.midpoint, self.radius = (high + low) / 2, (high - low) / 2
+
+    def forward(self, observation):
+        position = observation[..., self.position_index : self.position_index + 2]
+        normalized = ((position - self.midpoint) / self.radius).clamp(-0.999, 0.999)
+        loc = normalized.atanh() + self.network(observation)
+        return self.scale(loc)
+
+
+class InputScale(nn.Module):
+    """Normalize network inputs; the public observation keeps meters and radians."""
+
+    def __init__(self, scale):
+        super().__init__()
+        self.register_buffer("scale", torch.tensor(scale, dtype=torch.float32))
+
+    def forward(self, observation):
+        return observation * self.scale
+
+
 @torch.no_grad()
 def anneal_exploration(
     actor, settings: MAPPOSettings, progress: float, *, restart=False
@@ -169,6 +201,8 @@ def make_mappo_networks(
     action_dim=3,
     action_low=-1.0,
     action_high=1.0,
+    position_index=None,
+    observation_scale=None,
 ):
     """Return a shared actor and central critic with explicit action dimensions.
 
@@ -185,6 +219,20 @@ def make_mappo_networks(
         action_dim != 3 or action_low != -1 or action_high != 1
     ):
         raise ValueError("Velocity grids require three normalized velocity commands")
+    if position_index is not None and (
+        action_dim != 2
+        or action_grid is not None
+        or not 0 <= position_index <= obs_dim - 2
+    ):
+        raise ValueError("Position-centered targets require own XY and two actions")
+    if observation_scale is not None and (
+        len(observation_scale) != obs_dim
+        or not np.isfinite(observation_scale).all()
+        or min(observation_scale) <= 0
+    ):
+        raise ValueError(
+            "Input scales must be positive and match observation dimensions"
+        )
     actor_mlp = MultiAgentMLP(
         n_agent_inputs=obs_dim,
         n_agent_outputs=action_dim if action_grid is None else 3 * len(action_grid),
@@ -198,9 +246,21 @@ def make_mappo_networks(
     with torch.no_grad():
         nn.init.orthogonal_(actor_mlp.params["4", "weight"], gain=0.01)
         actor_mlp.params["4", "bias"].zero_()
+    actor_backbone = (
+        actor_mlp
+        if observation_scale is None
+        else nn.Sequential(InputScale(observation_scale), actor_mlp)
+    )
     if action_grid is None:
+        actor_module = (
+            nn.Sequential(actor_backbone, SharedScale(initial_log_std, action_dim))
+            if position_index is None
+            else PositionTargetActor(
+                actor_backbone, position_index, action_low, action_high, initial_log_std
+            )
+        )
         module = TensorDictModule(
-            nn.Sequential(actor_mlp, SharedScale(initial_log_std, action_dim)),
+            actor_module,
             in_keys=[("agents", "observation")],
             out_keys=[("agents", "loc"), ("agents", "scale")],
         )
@@ -227,7 +287,7 @@ def make_mappo_networks(
             bias = actor_mlp.params["4", "bias"].reshape(3, len(action_grid))
             bias[:, action_grid.index(0)].fill_(0.05)
         module = TensorDictModule(
-            actor_mlp,
+            actor_backbone,
             in_keys=[("agents", "observation")],
             out_keys=[("agents", "logits")],
         )
@@ -244,25 +304,52 @@ def make_mappo_networks(
         log_prob_key=("agents", "sample_log_prob"),
     )
     actor.action_grid = action_grid
+    actor.initial_log_std = float(initial_log_std)
+    actor.position_index = position_index
+    actor.observation_scale = observation_scale
     actor.action_dim, actor.action_low, actor.action_high = (
         action_dim,
         action_low,
         action_high,
     )
+    critic_mlp = MultiAgentMLP(
+        n_agent_inputs=obs_dim,
+        n_agent_outputs=1,
+        n_agents=num_robots,
+        centralized=True,
+        share_params=True,
+        num_cells=NETWORK["hidden_units"],
+        activation_class=nn.Tanh,
+    )
     critic = TensorDictModule(
-        MultiAgentMLP(
-            n_agent_inputs=obs_dim,
-            n_agent_outputs=1,
-            n_agents=num_robots,
-            centralized=True,
-            share_params=True,
-            num_cells=NETWORK["hidden_units"],
-            activation_class=nn.Tanh,
-        ),
+        critic_mlp
+        if observation_scale is None
+        else nn.Sequential(InputScale(observation_scale), critic_mlp),
         in_keys=[("agents", "observation")],
         out_keys=[("agents", "state_value")],
     )
     return actor, critic
+
+
+def make_pusht_networks(config, *, device="cpu", initial_log_std=-1.8, normalize=False):
+    """Build the current Push-T actor/critic directly from the task config."""
+    scale = [1 / config.workspace_half_extent] * config.observation_dim
+    angular_start = 5 if config.obs_type == "state" else 18
+    for index in range(angular_start, config.observation_dim, 3):
+        scale[index] = 1 / (2 * np.pi)
+    if config.obs_type == "state":
+        scale[4] = 1 / (2 * np.pi)
+    actor, critic = make_mappo_networks(
+        config.num_robots,
+        config.observation_dim,
+        action_dim=2,
+        action_low=-config.workspace_half_extent,
+        action_high=config.workspace_half_extent,
+        position_index=0 if config.obs_type == "state" else 16,
+        initial_log_std=initial_log_std,
+        observation_scale=scale if normalize else None,
+    )
+    return actor.to(device), critic.to(device)
 
 
 @torch.inference_mode()
@@ -348,6 +435,17 @@ def save_mappo(
         torchrl=torchrl.__version__,
         network={
             **NETWORK,
+            "initial_log_std": actor.initial_log_std,
+            **(
+                {"observation_scale": list(actor.observation_scale)}
+                if getattr(actor, "observation_scale", None) is not None
+                else {}
+            ),
+            **(
+                {"position_index": actor.position_index}
+                if getattr(actor, "position_index", None) is not None
+                else {}
+            ),
             **(
                 {
                     "action_dim": actor.action_dim,
@@ -394,15 +492,20 @@ def load_mappo(path: str | Path, *, device="cpu"):
     path = Path(path).resolve()
     saved = torch.load(path, weights_only=True, map_location="cpu")
     network = saved.get("network", {})
-    if (
-        not isinstance(network, dict)
-        or {
-            key: value
-            for key, value in network.items()
-            if key not in ("action_grid", "action_dim", "action_low", "action_high")
-        }
-        != NETWORK
-    ):
+    if not isinstance(network, dict) or {
+        key: value
+        for key, value in network.items()
+        if key
+        not in (
+            "action_grid",
+            "action_dim",
+            "action_low",
+            "action_high",
+            "position_index",
+            "observation_scale",
+            "initial_log_std",
+        )
+    } != {"hidden_units": NETWORK["hidden_units"]}:
         raise ValueError("Unrecognized TorchRL network architecture")
     if saved.get("format") == PUSHT_FORMAT:
         config = PosePushConfig.from_checkpoint(saved["pose_config"])
@@ -413,6 +516,8 @@ def load_mappo(path: str | Path, *, device="cpu"):
             or network.get("action_dim") != 2
             or (network.get("action_low"), network.get("action_high"))
             != (-config.workspace_half_extent, config.workspace_half_extent)
+            or network.get("position_index")
+            not in (None, 0 if config.obs_type == "state" else 16)
         ):
             raise ValueError(
                 "Push-T checkpoint has an inconsistent task or action layout"
@@ -435,10 +540,13 @@ def load_mappo(path: str | Path, *, device="cpu"):
     actor, critic = make_mappo_networks(
         saved["num_robots"],
         saved["obs_dim"],
+        initial_log_std=network["initial_log_std"],
         action_grid=network.get("action_grid"),
         action_dim=network.get("action_dim", 3),
         action_low=network.get("action_low", -1),
         action_high=network.get("action_high", 1),
+        position_index=network.get("position_index"),
+        observation_scale=network.get("observation_scale"),
     )
     actor.load_state_dict(saved["actor"])
     critic.load_state_dict(saved["critic"])

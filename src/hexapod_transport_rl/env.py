@@ -250,7 +250,11 @@ class PushEnv:
             raise ValueError("Expected finite action with shape (num_robots, 3)")
         commands = action_to_command(action)
         before = self.info()
-        previous_approach = self._mean_approach_distance()
+        previous_approach = (
+            before["approach"]
+            if "approach" in before
+            else self._mean_approach_distance()
+        )
 
         self._advance_physics(commands, on_control_step)
         self.steps += 1

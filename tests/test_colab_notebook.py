@@ -73,7 +73,7 @@ def test_student_notebook_excludes_infrastructure_settings_and_payloads():
         "IPython.display import Video",
     ):
         assert unnecessary not in source
-    assert NOTEBOOK.stat().st_size < 35_000
+    assert NOTEBOOK.stat().st_size < 20_000
 
 
 def test_public_checkout_preserves_student_edits(tmp_path, monkeypatch):
@@ -125,57 +125,57 @@ def test_public_checkout_preserves_student_edits(tmp_path, monkeypatch):
     assert (destination / "student.py").read_text() == "student edits\n"
 
 
-def test_reward_parameters_flow_directly_to_training_and_paired_evaluation():
+def test_reward_parameters_flow_directly_to_one_fresh_training_run():
     notebook = nbformat.read(NOTEBOOK, as_version=4)
     source = "\n".join(
         cell.source for cell in notebook.cells if cell.cell_type == "code"
     )
-    assert "config=config" in source
-    assert "from torchrl.collectors import Collector" in source
-    assert "total_frames=TRAINING_STEPS" in source
-    assert "make_mappo_loss(actor, critic, settings)" in source
-    assert "buffer.empty()" in source
-    assert "save_mappo(" in source
+    assert "checkpoint = train_mappo(" in source
+    assert "config, RUN_DIR" in source
+    assert "max_seconds=MAX_TRAINING_SECONDS" in source
+    assert "report = evaluate_mappo(checkpoint" in source
     assert "train_approach(" not in source
-    assert "reward_weights=changed_reward" in source
+    assert "reward_weights=reward" in source
     assert "seed=TRAINING_SEED" in source
-    assert "seed=TEST_SEED" in source
-    assert "PoseCurriculum(" in source
-    assert "action_dim=2" in source
+    assert "seed=98000" in source
+    assert "PoseCurriculum(" not in source
     assert "pushing_checkpoint=" not in source
     assert 'gym.make("HexapodPushT-v0"' in source
-    assert "comparison.to_csv" in source
-    assert "media.show_videos" in source
-    assert 'torch.device("cuda" if torch.cuda.is_available() else "cpu")' in source
-    assert "actor.to(DEVICE)" in source and "critic.to(DEVICE)" in source
+    assert "media.show_video(media.read_video(report" in source
     assert "COMMON_CHECKPOINT" not in source
-    assert "batch = batch.to(DEVICE)" in source
-    assert "LazyTensorStorage(FRAMES_PER_BATCH, device=DEVICE)" in source
-    assert "policy_device=envs.device" in source
-    assert 'backend="auto"' in source
-    assert "collector.update_policy_weights_()" in source
+    assert "unique=True" in source
+    assert "MAX_TRAINING_SECONDS = 360" in source
+    assert len(notebook.cells) <= 20
+    # The compact notebook calls a normal API; TorchRL owns the actual updates.
+    training = (ROOT / "src/hexapod_transport_rl/training.py").read_text()
+    assert "from torchrl.collectors import Collector" in training
+    assert "loss.value_estimator(batch)" in training
+    assert "buffer.empty()" in training
+    assert "optimizer.step()" in training
+    assert "load_mappo(" not in training
 
 
-def test_student_reward_experiment_preserves_official_coverage_baseline():
+def test_student_reward_experiment_distinguishes_study_terms_from_official_baseline():
     from dataclasses import asdict
 
-    from hexapod_transport_rl import PushTConfig
+    from hexapod_transport_rl import PushTConfig, PushTRewardWeights
 
     notebook = nbformat.read(NOTEBOOK, as_version=4)
     cell = next(
         cell.source
         for cell in notebook.cells
-        if cell.cell_type == "code" and "baseline_reward =" in cell.source
+        if cell.cell_type == "code" and "reward = PushTRewardWeights(" in cell.source
     )
-    namespace = {"PushTConfig": PushTConfig}
+    namespace = {"PushTConfig": PushTConfig, "PushTRewardWeights": PushTRewardWeights}
     exec(cell, namespace)
-    baseline = asdict(namespace["baseline_reward"])
-    changed = asdict(namespace["changed_reward"])
+    baseline = asdict(PushTRewardWeights())
     assert baseline["coverage"] == 1
     assert all(value == 0 for key, value in baseline.items() if key != "coverage")
-    assert {key for key in baseline if baseline[key] != changed[key]} == {"success"}
-    for config in namespace["conditions"].values():
-        assert config.coverage_threshold == 0.95
-        assert config.goal_pose == PushTConfig().goal_pose
-        assert config.robot_start == "goal_side"
-        assert config.observation_dim == 9
+    config = namespace["config"]
+    assert config.reward_weights.coverage == 0
+    assert config.reward_weights.progress == 10
+    assert config.reward_weights.approach == 1
+    assert config.coverage_threshold == 0.95
+    assert config.goal_pose == PushTConfig().goal_pose
+    assert config.robot_start == "goal_side"
+    assert config.observation_dim == 9

@@ -1,88 +1,58 @@
 # Hexapod Transport RL
 
 六足ロボットによる協調運搬を、TorchRLのMAPPOで調べる卒業研究向け教材です。
-固定した歩行モデルへ指令を送り、複数台が脚・足でTを押す上位方策を学びます。教師デモ・模倣損失は使いません。
+固定した歩行モデルへ指令を送り、運搬方策を毎回ランダムな重みから学習します。教師デモ・模倣学習は使いません。
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_colab.ipynb)
 
-Google ColabでT4 GPUを選び、上から実行してください。公開GitHubから取得するので認証は不要です。
-歩行コマンド → Gym API → 報酬 → TorchRLの収集・GAE・更新 → 評価・mediapy動画 → ZIP保存の順です。
-コードは普通のimportとPythonセルです。GPUではMuJoCo Warpで物理・固定歩行・学習・面積計算を行います。
+ColabでT4 GPUを選び、上から実行します。公開GitHubなので認証は不要です。
+教材は **歩行コマンド → Gym API → 報酬 → 新規学習 → 評価・動画** の順です。
+1つの報酬条件ごとに、初回の準備を除いて10分以内の実験ループを目指します。
 
-## 現在のPush-T仕様
+```python
+from hexapod_transport_rl import PushTConfig, PushTRewardWeights, train_mappo, evaluate_mappo
 
-[公式gym-pusht](https://github.com/huggingface/gym-pusht)の観測・行動・報酬・成功判定に近づけています。
-六足の3D物理、T→ゴール→ロボットの開始配置、等長2棒のTは研究用の拡張です。
-公式の2D環境と同じベンチマークではありません。[対応表](docs/pusht-protocol.md)に差分を記録しています。
+config = PushTConfig(reward_weights=PushTRewardWeights(), high_level_decimation=20)
+checkpoint = train_mappo(config, "runs/coverage_01", max_seconds=360)
+report = evaluate_mappo(checkpoint, episodes=8, seed=98000)
+```
+
+学習は環境構築を含め360秒を目安に、ロールアウトの境界で終了します。
+評価と動画1本を別に計測します。初回コンパイルやGPUの混雑によって時間は変わり、厳密な10分の保証ではありません。
+保存する初期重み・Adam・価値統計は新規です。前の条件の重みを次へ渡しません。
+
+## 課題
 
 | 項目 | 2台の場合 |
 |---|---|
 | 環境 | `HexapodPushT-v0` |
-| 状態観測 | 各機9成分：公式の5成分＋自分の向き＋相手の姿勢 |
-| キーポイント観測 | 各機22成分：Tの8頂点XY＋自分XY＋向き＋相手の姿勢 |
+| 観測 | 各機9成分：自分XY、TのXY・角度、自分の向き、相手の姿勢 |
 | 行動 | `(2,2)`、世界座標のXY目標 [m] |
-| 目標 | 固定位置・固定向き |
 | 標準報酬 | `clip(coverage / 0.95, 0, 1)` |
-| 成功 | 目標との面積重なり率95%超で直ちに成功 |
-| 物理 | 元の六足・モーター・歩行モデル、押し具なし、接触でTが動く |
+| 成功 | 目標との面積重なり率95%超 |
+| 初期配置 | T → ゴール → ロボット |
 
-横棒・縦棒は2台用でともに1.3 m、棒の太さは0.20 mです。
-ロボットの色は元の機体と同じで、床にはグリッドがあります。
-XY目標は位置追従で歩行指令へ変換します。Tを見て経路を決める制御器や教師行動はありません。
-`[0,0]`は原点への移動です。その場に留めるには現在位置を指定します。
-
-```python
-import gymnasium as gym
-import numpy as np
-import hexapod_transport_rl
-from hexapod_transport_rl import PushTConfig
-
-env = gym.make("HexapodPushT-v0", config=PushTConfig())
-observation, info = env.reset(seed=42)
-targets = np.asarray(info["agent_pos"], dtype=np.float32)
-observation, reward, terminated, truncated, info = env.step(targets)
-print(info["coverage"], info["reward_terms"])
-env.close()
-```
-
-## 報酬比較と学習の実績
-
-公式の面積報酬だけを基準条件にし、成功時報酬・時間・接触などを追加する研究条件と区別します。
-正の報酬と成功時の早期終了をRLで組み合わせると、成功直前の停滞が有利になる場合があります。
-学生用Colabでは基準条件と成功時報酬を追加する条件を、同じ初期重み・物理・予算で比べます。
-
-新仕様の初期試験は、各条件1,048,576チームステップ、ローカルRTX A6000で約2.5分でした。
-CPU・Warpとも開発24配置の成功は各0/24で、運搬獲得はまだ確認できていません。
-これは1学習seedの短い試験です。Colab/T4の時間や、成功する学習予算ではありません。
-[全設定・試行・検証](docs/results/pusht_protocol_20261013.json)を保存します。
-
-新しいモデルの保存形式は `hexapod-pusht-torchrl-mappo-v1` です。
-旧課題の観測・速度指令モデルは新しいXY行動へ流用しません。旧課題の成功率と約42秒の追加学習も別の実績です。
-[旧課題の追加学習Colab](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_pose_legacy.ipynb)と
-[旧課題の新規学習Colab](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_from_scratch.ipynb)に保存しています。
+[公式Push-T](https://github.com/huggingface/gym-pusht)の観測・行動・面積報酬・成功判定に対応させています。
+六足の3D物理・複数台・指定した初期配置と等長2棒は研究用の拡張です。[差分](docs/pusht-protocol.md)を記録しています。
+元の機体・歩行・モーターを使い、脚・足の接触で押します。色は元の機体と同じ、床はグリッドです。
 
 ## 読む場所
 
-- [公式との対応](docs/pusht-protocol.md)：観測・XY行動・面積・成功・研究用の追加項。
-- [学生用Colabの手順](docs/colab-guide.md)：比較条件・実験計画・保存。
-- [APIガイド](docs/api.md)：Gym API、歩行、TorchRL、評価。
-- [コードガイド](docs/code-guide.md)：環境・報酬・学習接続を読む順番。
-- [GPUの構成](docs/warp-training.md)：MuJoCo Warp、接触容量、実測の区別。
+- [Colabの実験手順](docs/colab-guide.md)：10分の予算、繰り返し、卒論での比較。
+- [API](docs/api.md)：歩行・XY目標・新規学習・評価。
+- [コード](docs/code-guide.md)：学生が読む6ファイル。
+- [実測と全試行](docs/results/compact_experiments_20261013.json)：時間と学習結果を分けて記録。
 
-歩行は1〜4台、押す環境は2〜4台です。4台のAPI更新・保存・読み込みは検証していますが、運搬の学習性能は未確認です。
-平坦床・障害物なしで、シミュレータの状態を観測します。実機の認識・通信誤差は含みません。
+短い試験で実行できることと、95%の運搬を習得することは別です。成功する予算はまだ確立していません。
+ローカルA6000の値をColab/T4の実測とは扱いません。4台のAPIは検証していますが、学習性能は未確認です。
+以前の速度指令・姿勢誤差の課題は[資料](docs/archive/)と[ノートブック](notebooks/archive/)へ移しています。
+旧課題の成功率と約42秒の追加学習は、新しい課題の実績ではありません。
 
 ## ローカル
 
-Python 3.12〜3.13とuvを使います。機体と歩行モデルはパッケージに同梱しています。
+Python 3.12〜3.13、uvを使います。`uv sync --locked`はCPU版PyTorchです。
+CUDA版Pythonでは `uv pip install --python <Python> --no-sources -e ".[warp]"` を実行します。
+GPUの構成は[こちら](docs/warp-training.md)、元の機体・歩行資産の出典は`src/hexapod_transport_rl/assets/manifest.json`です。
 
-```bash
-git clone https://github.com/hashimoto-robotics-lab/hexapod-transport-rl.git
-cd hexapod-transport-rl
-uv sync --locked
-MUJOCO_GL=egl uv run pytest -q
-```
-
-`uv sync --locked`はCPU版PyTorchです。Colabの準備セルはインストール済みのCUDA版PyTorchを維持します。
-ローカルGPUでは `uv pip install --python <CUDA版Python> --no-sources -e ".[warp]"` を実行します。
-元の機体・歩行資産の出典は `src/hexapod_transport_rl/assets/manifest.json`、旧運搬モデルは `checkpoints/manifest.json` にあります。
+学生用の運搬ではXY目標を0.8秒保ちます（`high_level_decimation=20`）。標準Gym設定は0.2秒です。
+歩行25 Hz・物理200 Hzは同じで、記録する動画は実際の25 Hzフレームです。

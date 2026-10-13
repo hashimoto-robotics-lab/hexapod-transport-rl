@@ -1,8 +1,8 @@
-> これは旧課題の共通モデルからの追加学習の記録です。[現在の学生用標準](pusht-protocol.md) は公式に近いXY行動と95%面積判定で、新しい学習が必要です。約42秒の時間は新仕様には適用しません。
+> これは旧課題の共通モデルからの追加学習の記録です。[現在の学生用標準](../pusht-protocol.md) は公式に近いXY行動と95%面積判定で、新しい学習が必要です。約42秒の時間は新仕様には適用しません。
 
 # 短時間で報酬の組み合わせを比較する
 
-[学生用Colab](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_pose_legacy.ipynb)は、共通のRL学習済みモデルから報酬を変えて追加学習する教材です。
+[学生用Colab](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/archive/hexapod_transport_rl_pose_legacy.ipynb)は、共通のRL学習済みモデルから報酬を変えて追加学習する教材です。
 毎回の回り込み獲得を省き、学生が報酬の仮説・比較・評価へ時間を使えるようにしました。
 教師デモ・行動ラベル・模倣損失は使いません。全行動をMAPPOが選びます。
 
@@ -17,7 +17,7 @@
 新規学習のコストはなくなりません。共通モデルはランダムな重みから3,145,728チームステップ、
 ローカルRTX A6000で30.1分学びました。これは1つの事前学習seedです。
 この教材で研究するのは**報酬変更後の適応**です。新規学習の速さや、報酬だけから最初に獲得する行動とは区別します。
-[ランダムな重みからの新規学習Colab](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_from_scratch.ipynb)も残しています。
+[ランダムな重みからの新規学習Colab](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/archive/hexapod_transport_rl_from_scratch.ipynb)も残しています。
 
 ## 実験の結果
 
@@ -42,7 +42,7 @@ CPUではモデルごと47〜50/50、Warpでは43〜50/50でした。全12モデ
 共通モデルのままでも、この最終配置ではCPU・Warpとも49/50でした。追加学習による成功率向上は示していません。
 以前の未使用配置 `88000..88049` では共通モデルは44/50でした。新しい49/50と比べて性能が改善したとは扱いません。
 
-![3種類の追加学習seedを比較](figures/fast_reward_comparison.png)
+![3種類の追加学習seedを比較](../figures/fast_reward_comparison.png)
 
 図の点は各追加学習seedの結果です。時間の差は小さく、接触には大きなばらつきがあります。
 胴体接触の試行率のseed間標準偏差は、標準22.5ポイント・時間30.8・接触31.1・両方6.9ポイントでした。
@@ -51,8 +51,8 @@ CPUではモデルごと47〜50/50、Warpでは43〜50/50でした。全12モデ
 接触ペナルティは接触時間に基づくので、「一度でも胴体に触れた試行数」と力積の割合は別の指標です。
 脚・足の押しが中心ですが、胴体接触を完全に排除した方策ではありません。
 
-[全設定・全試行・初期重み比較・時間](results/fast_reward_adaptation_20261008.json)と
-[seedごとの比較CSV](results/fast_reward_adaptation_20261008_trials.csv)を保存しています。
+[全設定・全試行・初期重み比較・時間](../results/fast_reward_adaptation_20261008.json)と
+[seedごとの比較CSV](../results/fast_reward_adaptation_20261008_trials.csv)を保存しています。
 50配置のGPU評価は、モデル読み込み・環境作成を含め約14〜18秒でした。
 通常のCPU評価も全モデルで実施し、GPUの成功数をCPUの成功数と同一視しません。
 

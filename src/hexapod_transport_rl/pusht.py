@@ -17,6 +17,7 @@ from .config import COMMAND_HIGH, COMMAND_LOW, command_to_action, rotation
 from .contacts import BODY
 from .env import PushEnv
 from .pose_push import PosePhysics, PosePushConfig, PosePushEnv
+from .push_approach import PushApproachDistance
 from .pusht_geometry import coverage_numpy, local_rectangles, transform_rectangles
 
 PUSHT_ENV_ID = "HexapodPushT-v0"
@@ -27,6 +28,8 @@ class PushTRewardWeights:
     """Official coverage reward by default; opt-in study terms are extensions."""
 
     coverage: float = 1.0
+    progress: float = 0.0
+    approach: float = 0.0
     time: float = 0.0
     body_contact: float = 0.0
     robot_contact: float = 0.0
@@ -144,6 +147,7 @@ def pusht_reward_terms(
     *,
     math,
     command_limits=None,
+    before=None,
 ):
     weights = config.reward_weights
     coverage = info["coverage"] / config.coverage_threshold
@@ -160,6 +164,10 @@ def pusht_reward_terms(
     )
     return dict(
         coverage=weights.coverage * coverage,
+        progress=weights.progress
+        * (info["coverage"] - before["coverage"] if before is not None else 0.0),
+        approach=weights.approach
+        * (before["approach"] - info["approach"] if before is not None else 0.0),
         time=-weights.time * config.dt + coverage * 0,
         body_contact=-weights.body_contact
         * config.dt
@@ -179,8 +187,13 @@ class PushTPhysics(PosePhysics):
     def __init__(self, cfg=None, asset_root=None):
         cfg = cfg or PushTConfig()
         self.rectangles = local_rectangles(cfg)
-        # The coverage task has no approach-path reward or visibility graph.
+        self.approach_distance = PushApproachDistance(cfg)
+        # State cost is a diagnostic for all conditions. It supplies no action.
         PushEnv.__init__(self, cfg, asset_root)
+
+    def _mean_approach_distance(self):
+        positions = (self.robot_xy - self.cargo_xy) @ rotation(self.cargo_yaw)
+        return float(self.approach_distance(positions).mean())
 
     def _reset_robot_poses(self, cargo_heading, randomize):
         super()._reset_robot_poses(cargo_heading, randomize)
@@ -232,6 +245,7 @@ class PushTPhysics(PosePhysics):
         info["coverage"] = coverage_numpy(
             self.rectangles, self.cargo_xy, self.cargo_yaw, self.goal, self.goal_yaw
         )
+        info["approach"] = self._mean_approach_distance()
         return info
 
     def _update_episode_status(self, info):
@@ -254,6 +268,7 @@ class PushTPhysics(PosePhysics):
             self.contacts.part_contact_counts[BODY],
             self.contacts.robot_collision_steps,
             math=np,
+            before=before,
         )
         return {key: float(value) for key, value in terms.items()}
 

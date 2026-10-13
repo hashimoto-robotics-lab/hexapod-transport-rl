@@ -16,6 +16,11 @@ class WarpPushTWorlds(WarpPoseWorlds):
         )
         super().__init__(config, num_envs, asset_root, device)
 
+    def reset(self, *, seed=None, options=None):
+        observation, info = super().reset(seed=seed, options=options)
+        info.update(self.measurements())
+        return observation, info
+
     def _finish_reset(self, mask):
         cfg = self.pending_config
         delta = cfg.goal_pose[2] - self.goal_yaw
@@ -74,6 +79,7 @@ class WarpPushTWorlds(WarpPoseWorlds):
         info["coverage"] = coverage_torch(
             self.rectangles, xy, yaw, self.goal, self.goal_yaw
         )
+        info["approach"] = self.approach_distance(self.coordinates()[2]).mean(-1)
         return info
 
     def status(self, info):
@@ -97,6 +103,7 @@ class WarpPushTWorlds(WarpPoseWorlds):
             contacts.robot_collision_steps,
             math=torch,
             command_limits=self.limits,
+            before=before,
         )
 
     @torch.no_grad()

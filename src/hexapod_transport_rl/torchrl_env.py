@@ -87,6 +87,11 @@ class TorchRLTransportEnv(EnvBase):
         self.action_dim = action_space.shape[-1]
         self.asynchronous = asynchronous
         self.config = config
+        self.metric_names = (
+            ("coverage", "approach")
+            if getattr(config, "task_type", None) == "pusht"
+            else ()
+        )
         self.provenance = self.worlds.call("provenance")[0]
         self._reset_seed = None
         self.observation_spec = Composite(
@@ -121,6 +126,8 @@ class TorchRLTransportEnv(EnvBase):
             shape=(num_envs,),
             device=device,
         )
+        for name in self.metric_names:
+            self.observation_spec[name] = Unbounded(shape=(num_envs, 1), device=device)
         self.reward_spec = Unbounded(shape=(num_envs, 1), device=device)
         self.done_spec = Composite(
             **{
@@ -134,7 +141,7 @@ class TorchRLTransportEnv(EnvBase):
         )
 
     def _observation(self, observation, info) -> TensorDict:
-        return TensorDict(
+        result = TensorDict(
             {
                 "agents": TensorDict(
                     {
@@ -151,6 +158,11 @@ class TorchRLTransportEnv(EnvBase):
             batch_size=self.batch_size,
             device=self.device,
         )
+        for name in self.metric_names:
+            result[name] = torch.as_tensor(
+                info[name], dtype=torch.float32, device=self.device
+            ).reshape(-1, 1)
+        return result
 
     def _reset(self, tensordict=None, **kwargs):
         reset = tensordict.get("_reset", None) if tensordict is not None else None

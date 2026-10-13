@@ -10,12 +10,17 @@ import sys
 from pathlib import Path
 
 
-def create_experiment(project_dir: str | Path, name: str) -> Path:
+def create_experiment(project_dir: str | Path, name: str, *, unique=False) -> Path:
     """Create a new results directory and snapshot the exact research sources/assets."""
     project_dir = Path(project_dir).resolve()
     if not name or Path(name).name != name or name in (".", ".."):
         raise ValueError("Use a single directory name for the experiment")
     output = project_dir / "runs" / name
+    if unique:
+        index = 2
+        while output.exists():
+            output = project_dir / "runs" / f"{name}_{index:02d}"
+            index += 1
     output.mkdir(parents=True, exist_ok=False)
     snapshot = output / "source_snapshot"
     snapshot.mkdir()

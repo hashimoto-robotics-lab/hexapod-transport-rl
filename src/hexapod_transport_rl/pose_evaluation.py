@@ -258,8 +258,6 @@ def evaluate_pose(
             config = PosePushConfig.from_checkpoint(saved["pose_config"])
     if not isinstance(config, PosePushConfig):
         raise TypeError("Pose evaluation requires PosePushConfig")
-    if config.dt != 0.2 and video_dir:
-        raise ValueError("Pose videos currently use the standard 0.2 s control step")
     call = partial(
         _run_batch,
         config,

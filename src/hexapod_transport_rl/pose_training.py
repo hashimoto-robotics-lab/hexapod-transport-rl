@@ -319,6 +319,8 @@ class PoseCurriculum:
                 )
             },
         )
+        for name in self.env.metric_names:
+            row[f"mean_{name}"] = float(batch["next", name].mean())
         logfile = self.output / "progress.csv"
         exists = logfile.exists()
         with logfile.open("a", newline="") as stream:
