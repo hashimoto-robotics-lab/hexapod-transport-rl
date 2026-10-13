@@ -1,6 +1,8 @@
+> これは旧課題の共通モデルからの追加学習の記録です。[現在の学生用標準](pusht-protocol.md) は公式に近いXY行動と95%面積判定で、新しい学習が必要です。約42秒の時間は新仕様には適用しません。
+
 # 短時間で報酬の組み合わせを比較する
 
-[学生用Colab](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_colab.ipynb)は、共通のRL学習済みモデルから報酬を変えて追加学習する教材です。
+[学生用Colab](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/hexapod_transport_rl_pose_legacy.ipynb)は、共通のRL学習済みモデルから報酬を変えて追加学習する教材です。
 毎回の回り込み獲得を省き、学生が報酬の仮説・比較・評価へ時間を使えるようにしました。
 教師デモ・行動ラベル・模倣損失は使いません。全行動をMAPPOが選びます。
 

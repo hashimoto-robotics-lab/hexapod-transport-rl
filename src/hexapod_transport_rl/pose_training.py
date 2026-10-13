@@ -29,7 +29,7 @@ class PoseCurriculum:
         seed,
         settings,
         horizon,
-        stages=POSE_STAGES,
+        stages=None,
         validate_every=8,
         minimum_rollouts=8,
         validation_episodes=6,
@@ -38,7 +38,10 @@ class PoseCurriculum:
         initial_checkpoint=None,
         resume=None,
     ):
-        if settings.gamma != config.shaping_discount:
+        if (
+            getattr(config, "task_type", None) != "pusht"
+            and settings.gamma != config.shaping_discount
+        ):
             raise ValueError("Potential shaping discount must match MAPPO gamma")
         if min(minimum_rollouts, validation_episodes, horizon) < 1 or (
             validate_every is not None and validate_every < 1
@@ -47,6 +50,21 @@ class PoseCurriculum:
         if not 0 < advance_threshold <= 1:
             raise ValueError("Advance threshold must be in (0,1]")
         self.config, self.env, self.actor = config, env, actor
+        if stages is None:
+            stages = (
+                (
+                    PoseStage(
+                        "fixed_task",
+                        config.goal_distance,
+                        config.max_yaw_degrees,
+                        config.position_tolerance,
+                        config.yaw_tolerance,
+                        config.success_hold_seconds,
+                    ),
+                )
+                if validate_every is None
+                else POSE_STAGES
+            )
         self.stages = tuple(stages)
         if not self.stages:
             raise ValueError("At least one pose stage is required")
@@ -101,6 +119,16 @@ class PoseCurriculum:
                 parent_team_steps=parent["curriculum"]["transitions"],
                 optimizer_inherited=False,
                 demonstration_actions_used=False,
+            )
+        if getattr(config, "task_type", None) == "pusht":
+            self.training.update(
+                success_criterion={
+                    "type": "coverage",
+                    "threshold": config.coverage_threshold,
+                    "hold_required": False,
+                },
+                observation_mode=config.obs_type,
+                action_mode="world_xy_target_meters",
             )
         if settings.fixed_exploration:
             self.training["exploration_schedule"] = dict(

@@ -39,7 +39,7 @@ build-backend = "hatchling.build"
 packages = ["src/hexapod_transport_rl"]
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6", "nbformat>=5.10", "nbclient>=0.10", "ipykernel>=6"]
+dev = ["pytest>=8", "ruff>=0.6", "nbformat>=5.10", "nbclient>=0.10", "ipykernel>=6", "shapely>=2,<3"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

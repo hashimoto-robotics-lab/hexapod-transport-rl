@@ -17,11 +17,23 @@ import torch
 
 from .config import command_to_action, rotation, wrap
 from .pose_push import PosePushConfig, PosePushEnv
-from .torchrl_mappo import POSE_FORMAT, load_mappo, policy_action
+from .torchrl_mappo import POSE_FORMAT, PUSHT_FORMAT, load_mappo, policy_action
 
 
 def rule_action(core, policy="feedback"):
     """A forward-only baseline or proportional pose feedback, in API coordinates."""
+    if getattr(core.cfg, "task_type", None) == "pusht":
+        if policy == "feedback":
+            return np.tile(core.goal, (core.cfg.num_robots, 1)).astype(np.float32)
+        if policy == "forward":
+            headings = core.yaw(core.base_ids)
+            return np.clip(
+                core.robot_xy
+                + 0.3 * np.column_stack((np.cos(headings), np.sin(headings))),
+                -core.cfg.workspace_half_extent,
+                core.cfg.workspace_half_extent,
+            ).astype(np.float32)
+        raise ValueError("Rule baseline must be forward or feedback")
     if policy == "forward":
         vx = 0.0 if core.info()["distance"] < core.cfg.position_tolerance else 0.12
         if core.cfg.action_frame == "cargo":
@@ -75,9 +87,20 @@ def _run_batch(config, checkpoint, policy, seeds, video_dir, asset_root, width, 
     actor = None
     if policy == "learned":
         actor, _, saved = load_mappo(checkpoint)
-        if saved["format"] != POSE_FORMAT:
+        if saved["format"] not in (POSE_FORMAT, PUSHT_FORMAT):
             raise ValueError("Pose evaluation requires a learned pose checkpoint")
-    env = PosePushEnv(
+        if (saved["format"] == PUSHT_FORMAT) != (
+            getattr(config, "task_type", None) == "pusht"
+        ):
+            raise ValueError(
+                "Checkpoint observation/action conventions differ from the evaluation task"
+            )
+    env_type = PosePushEnv
+    if getattr(config, "task_type", None) == "pusht":
+        from .pusht import PushTEnv
+
+        env_type = PushTEnv
+    env = env_type(
         config,
         asset_root,
         render_mode="rgb_array_list" if video_dir else None,
@@ -105,6 +128,7 @@ def _run_batch(config, checkpoint, policy, seeds, video_dir, asset_root, width, 
             total_reward = 0.0
             distance_integral = yaw_integral = cargo_path = 0.0
             previous_xy = np.asarray(initial["cargo_xy"])
+            max_coverage = initial.get("coverage", 0.0)
             trace = []
             while not (terminated or truncated):
                 action = (
@@ -121,6 +145,7 @@ def _run_batch(config, checkpoint, policy, seeds, video_dir, asset_root, width, 
                 cargo_xy = np.asarray(info["cargo_xy"])
                 cargo_path += float(np.linalg.norm(cargo_xy - previous_xy))
                 previous_xy = cargo_xy
+                max_coverage = max(max_coverage, info.get("coverage", 0.0))
                 for name in impulses:
                     impulses[name] += info[f"{name}_normal_impulse_ns"]
                 robot_contact |= info["robot_collision_fraction"] > 0
@@ -174,6 +199,8 @@ def _run_batch(config, checkpoint, policy, seeds, video_dir, asset_root, width, 
                 },
             )
             rows.append(row)
+            if "coverage" in info:
+                row.update(coverage=info["coverage"], max_coverage=max_coverage)
             if frames is not None:
                 import mediapy as media
 
@@ -226,7 +253,7 @@ def evaluate_pose(
             config = PosePushConfig()
         else:
             _, _, saved = load_mappo(checkpoint)
-            if saved["format"] != POSE_FORMAT:
+            if saved["format"] not in (POSE_FORMAT, PUSHT_FORMAT):
                 raise ValueError("Pose evaluation requires a pose checkpoint")
             config = PosePushConfig.from_checkpoint(saved["pose_config"])
     if not isinstance(config, PosePushConfig):
@@ -288,6 +315,11 @@ def evaluate_pose(
     )
     if checkpoint:
         report["checkpoint"] = str(checkpoint)
+    if "coverage" in rows[0]:
+        report.update(
+            mean_coverage=float(np.mean([r["coverage"] for r in rows])),
+            mean_max_coverage=float(np.mean([r["max_coverage"] for r in rows])),
+        )
     if output:
         path = Path(output)
         path.parent.mkdir(parents=True, exist_ok=True)

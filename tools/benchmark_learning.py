@@ -15,6 +15,7 @@ from hexapod_transport_rl import (
     PoseCurriculum,
     PosePushConfig,
     PoseStage,
+    PushTConfig,
     TorchRLTransportEnv,
     load_mappo,
     make_mappo_loss,
@@ -30,6 +31,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("name")
     p.add_argument("--checkpoint")
+    p.add_argument("--task", choices=("pose", "pusht"), default="pose")
+    p.add_argument("--obs-type", choices=("state", "keypoints"), default="state")
     p.add_argument("--steps", type=int, default=131072)
     p.add_argument("--worlds", type=int, default=256)
     p.add_argument("--horizon", type=int, default=64)
@@ -39,6 +42,7 @@ def main():
     p.add_argument("--weights", default="{}")
     p.add_argument("--smooth-curriculum", action="store_true")
     p.add_argument("--benchmark", action="store_true")
+    p.add_argument("--fixed-task", action="store_true")
     a = p.parse_args()
     frames = a.worlds * a.horizon
     if (
@@ -52,7 +56,11 @@ def main():
     run = create_experiment(ROOT, a.name)
     (run / "training_driver.py").write_text(Path(__file__).read_text())
     output = run / "trial"
-    config = PosePushConfig(shaping_discount=0.995)
+    config = (
+        PushTConfig(obs_type=a.obs_type)
+        if a.task == "pusht"
+        else PosePushConfig(shaping_discount=0.995)
+    )
     parent = None
     if a.checkpoint:
         actor, critic, parent = load_mappo(a.checkpoint, device="cuda")
@@ -73,7 +81,14 @@ def main():
     env.set_seed(a.seed)
     if parent is None:
         actor, critic = make_mappo_networks(
-            env.num_robots, env.obs_dim, action_grid=(-1, -0.5, -0.25, 0, 0.25, 0.5, 1)
+            env.num_robots,
+            env.obs_dim,
+            action_dim=env.action_dim,
+            action_low=float(env.worlds.single_action_space.low.min()),
+            action_high=float(env.worlds.single_action_space.high.max()),
+            action_grid=None
+            if getattr(config, "task_type", None) == "pusht"
+            else (-1, -0.5, -0.25, 0, 0.25, 0.5, 1),
         )
         actor.cuda()
         critic.cuda()
@@ -85,10 +100,10 @@ def main():
     )
     optimizer = torch.optim.Adam(loss.parameters(), lr=settings.learning_rate)
     stages = None
-    if parent:
+    if parent or a.fixed_task:
         stages = (
             PoseStage(
-                "reward_adaptation",
+                "reward_adaptation" if parent else "fixed_task",
                 config.goal_distance,
                 config.max_yaw_degrees,
                 config.position_tolerance,
@@ -125,7 +140,7 @@ def main():
         seed=a.seed,
         settings=settings,
         horizon=a.horizon,
-        validate_every=None if parent else 8,
+        validate_every=None if parent or a.fixed_task else 8,
         initial_checkpoint=a.checkpoint,
         minimum_rollouts=8,
         **kwargs,

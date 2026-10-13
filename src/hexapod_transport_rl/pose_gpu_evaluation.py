@@ -6,7 +6,7 @@ import torch
 from tensordict import TensorDict
 
 from .torchrl_env import TorchRLTransportEnv
-from .torchrl_mappo import POSE_FORMAT, load_mappo
+from .torchrl_mappo import POSE_FORMAT, PUSHT_FORMAT, load_mappo
 from .warp_pose import cargo_coordinates
 
 
@@ -22,8 +22,14 @@ def evaluate_warp(config, checkpoint, seeds, asset_root):
     )
     try:
         actor, _, saved = load_mappo(checkpoint, device=env.device)
-        if saved["format"] != POSE_FORMAT:
+        if saved["format"] not in (POSE_FORMAT, PUSHT_FORMAT):
             raise ValueError("Pose evaluation requires a learned pose checkpoint")
+        if (saved["format"] == PUSHT_FORMAT) != (
+            getattr(config, "task_type", None) == "pusht"
+        ):
+            raise ValueError(
+                "Checkpoint observation/action conventions differ from the evaluation task"
+            )
         if any(
             env.provenance[key] != saved["run"]["provenance"][key]
             for key in ("low_level_sha256", "robot_xml_sha256")
@@ -52,6 +58,9 @@ def evaluate_warp(config, checkpoint, seeds, asset_root):
         collisions = torch.zeros_like(finished)
         impulses = torch.zeros(count, 3, config.num_robots, device=env.device)
         previous_xy = worlds.coordinates()[0].clone()
+        max_coverage = torch.tensor(
+            [i.get("coverage", 0.0) for i in initial], device=env.device
+        )
         endpoints = torch.tensor(
             [
                 [0, -config.t_arm_length],
@@ -101,6 +110,11 @@ def evaluate_warp(config, checkpoint, seeds, asset_root):
                 elapsed_seconds=torch.full_like(path, (step + 1) * config.dt),
                 footprint_error_m=((actual - target).square().sum(-1).mean(-1)).sqrt(),
             )
+            if "coverage" in info:
+                max_coverage = torch.maximum(
+                    max_coverage, torch.where(active, info["coverage"], 0.0)
+                )
+                measurements["coverage"] = info["coverage"]
             done = terminated | truncated
             new_done = done & active
             for key, value in measurements.items():
@@ -142,6 +156,8 @@ def evaluate_warp(config, checkpoint, seeds, asset_root):
                 },
             )
             rows.append(row)
+            if "coverage" in row:
+                row["max_coverage"] = float(max_coverage[lane])
         return rows
     finally:
         env.close()

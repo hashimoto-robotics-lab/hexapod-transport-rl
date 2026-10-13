@@ -2,17 +2,20 @@
   "base_pusher.pt": {
     "source": "runs/train_T_mappo_20261006_refined/best_validation_checkpoint.pt",
     "purpose": "Reward-trained pusher used to initialize navigation and handover learning",
-    "sha256": "b1f03a4882ab2c103f29f0af08f3921558ac0806f9033e41666b8a881aab0995"
+    "sha256": "b1f03a4882ab2c103f29f0af08f3921558ac0806f9033e41666b8a881aab0995",
+    "task_scope": "Historical velocity-command task; not compatible with HexapodPushT-v0 world XY actions"
   },
   "transport.pt": {
     "source": "runs/walkaround_rl_result_20261006/transport.pt",
     "purpose": "Selected learned navigator; paired with pusher.pt",
-    "sha256": "b895f5009579d84fb0f323d94cb20754246f7149365afc3840cd3e2a6d83903d"
+    "sha256": "b895f5009579d84fb0f323d94cb20754246f7149365afc3840cd3e2a6d83903d",
+    "task_scope": "Historical velocity-command task; not compatible with HexapodPushT-v0 world XY actions"
   },
   "pusher.pt": {
     "source": "runs/walkaround_rl_result_20261006/pusher.pt",
     "purpose": "Selected learned pusher adapted to handover poses",
-    "sha256": "4955887423c2b77f5415be77c2e16613e2a77e918b9a8f91cfb7aa58aa9522e4"
+    "sha256": "4955887423c2b77f5415be77c2e16613e2a77e918b9a8f91cfb7aa58aa9522e4",
+    "task_scope": "Historical velocity-command task; not compatible with HexapodPushT-v0 world XY actions"
   },
   "lesson_transport.pt": {
     "source": "runs/torchrl_course_stable_20261007/transport.pt",
@@ -20,7 +23,8 @@
     "sha256": "3cacf937878738f033c14ece1ffa929e48649a507a59cfa2e2d1fbca0691c2f5",
     "team_steps": 32768,
     "seed": 20261008,
-    "evaluation": "docs/results/short_task_20261007.json"
+    "evaluation": "docs/results/short_task_20261007.json",
+    "task_scope": "Historical velocity-command task; not compatible with HexapodPushT-v0 world XY actions"
   },
   "pose_transport.pt": {
     "source": "runs/pose_annealed_20261007/pose.pt",
@@ -30,7 +34,8 @@
     "seed": 20261010,
     "advance_threshold": 0.75,
     "evaluation": "docs/results/pose_task_20261007.json",
-    "illustrative_seed": 87004
+    "illustrative_seed": 87004,
+    "task_scope": "Historical velocity-command task; not compatible with HexapodPushT-v0 world XY actions"
   },
   "goal_side_pose.pt": {
     "source": "runs/goal_side_velocity_choices_no_angle_20261008_01/baseline/pose.pt",
@@ -45,6 +50,7 @@
     ],
     "native_test_successes": 44,
     "native_test_episodes": 50,
-    "num_robots": 2
+    "num_robots": 2,
+    "task_scope": "Historical velocity-command task; not compatible with HexapodPushT-v0 world XY actions"
   }
 }

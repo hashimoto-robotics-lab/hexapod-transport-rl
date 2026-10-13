@@ -32,6 +32,7 @@ from .velocity_distribution import VelocityDistribution
 
 FORMAT = "hexapod-approach-torchrl-mappo-v1"
 POSE_FORMAT = "hexapod-pose-push-torchrl-mappo-v1"
+PUSHT_FORMAT = "hexapod-pusht-torchrl-mappo-v1"
 NETWORK = dict(hidden_units=[128, 128], initial_log_std=-1.0)
 
 
@@ -124,13 +125,13 @@ def make_mappo_loss(
 
 
 class SharedScale(nn.Module):
-    """Learn the same three exploration scales for every robot."""
+    """Learn one exploration scale per action component, shared across robots."""
 
-    def __init__(self, initial_log_std=NETWORK["initial_log_std"]):
+    def __init__(self, initial_log_std=NETWORK["initial_log_std"], action_dim=3):
         super().__init__()
         if not np.isfinite(initial_log_std):
             raise ValueError("Initial log standard deviation must be finite")
-        self.log_std = nn.Parameter(torch.full((3,), float(initial_log_std)))
+        self.log_std = nn.Parameter(torch.full((action_dim,), float(initial_log_std)))
 
     def forward(self, loc):
         return loc, self.log_std.exp().expand_as(loc)
@@ -165,15 +166,28 @@ def make_mappo_networks(
     *,
     initial_log_std=NETWORK["initial_log_std"],
     action_grid=None,
+    action_dim=3,
+    action_low=-1.0,
+    action_high=1.0,
 ):
-    """Return shared actor and central critic for three normalized commands.
+    """Return a shared actor and central critic with explicit action dimensions.
 
     An action_grid selects velocity candidates with categorical probabilities.
     Omitting it preserves the continuous Gaussian policy used by older models.
     """
+    if (
+        action_dim < 1
+        or not np.isfinite([action_low, action_high]).all()
+        or action_low >= action_high
+    ):
+        raise ValueError("Action dimensions and bounds must be valid")
+    if action_grid is not None and (
+        action_dim != 3 or action_low != -1 or action_high != 1
+    ):
+        raise ValueError("Velocity grids require three normalized velocity commands")
     actor_mlp = MultiAgentMLP(
         n_agent_inputs=obs_dim,
-        n_agent_outputs=3 if action_grid is None else 3 * len(action_grid),
+        n_agent_outputs=action_dim if action_grid is None else 3 * len(action_grid),
         n_agents=num_robots,
         centralized=False,
         share_params=True,
@@ -186,14 +200,14 @@ def make_mappo_networks(
         actor_mlp.params["4", "bias"].zero_()
     if action_grid is None:
         module = TensorDictModule(
-            nn.Sequential(actor_mlp, SharedScale(initial_log_std)),
+            nn.Sequential(actor_mlp, SharedScale(initial_log_std, action_dim)),
             in_keys=[("agents", "observation")],
             out_keys=[("agents", "loc"), ("agents", "scale")],
         )
         parameters = [("agents", "loc"), ("agents", "scale")]
         distribution, arguments = (
             TanhNormal,
-            {"low": -1.0, "high": 1.0, "event_dims": 1},
+            {"low": action_low, "high": action_high, "event_dims": 1},
         )
     else:
         action_grid = tuple(float(value) for value in action_grid)
@@ -230,6 +244,11 @@ def make_mappo_networks(
         log_prob_key=("agents", "sample_log_prob"),
     )
     actor.action_grid = action_grid
+    actor.action_dim, actor.action_low, actor.action_high = (
+        action_dim,
+        action_low,
+        action_high,
+    )
     critic = TensorDictModule(
         MultiAgentMLP(
             n_agent_inputs=obs_dim,
@@ -248,7 +267,7 @@ def make_mappo_networks(
 
 @torch.inference_mode()
 def policy_action(actor, observation) -> np.ndarray:
-    """Deterministic normalized (N,3) commands from a Gymnasium observation.
+    """Deterministic (N,A) actions in the actor's configured Gymnasium units.
 
     Gaussian policies use tanh(loc); velocity-choice policies use the most
     likely command on each axis. Neither adds navigation or stopping rules.
@@ -291,7 +310,18 @@ def save_mappo(
             raise ValueError("Saved pose config differs from the training world")
         extra = dict(pose_config=asdict(config))
         file_format, num_robots = POSE_FORMAT, config.num_robots
-        obs_dim = 18 + 4 * (num_robots - 1)
+        if getattr(config, "task_type", None) == "pusht":
+            file_format, obs_dim = PUSHT_FORMAT, config.observation_dim
+            if (actor.action_dim, actor.action_low, actor.action_high) != (
+                2,
+                -config.workspace_half_extent,
+                config.workspace_half_extent,
+            ):
+                raise ValueError(
+                    "Push-T checkpoint requires physical XY target actions"
+                )
+        else:
+            obs_dim = 18 + 4 * (num_robots - 1)
     else:
         pushing_checkpoint = Path(pushing_checkpoint).resolve()
         actual_config = ApproachConfig(**provenance["approach_config"])
@@ -318,6 +348,17 @@ def save_mappo(
         torchrl=torchrl.__version__,
         network={
             **NETWORK,
+            **(
+                {
+                    "action_dim": actor.action_dim,
+                    "action_low": actor.action_low,
+                    "action_high": actor.action_high,
+                }
+                if actor.action_dim != 3
+                or actor.action_low != -1
+                or actor.action_high != 1
+                else {}
+            ),
             **(
                 {"action_grid": list(actor.action_grid)}
                 if getattr(actor, "action_grid", None) is not None
@@ -355,11 +396,28 @@ def load_mappo(path: str | Path, *, device="cpu"):
     network = saved.get("network", {})
     if (
         not isinstance(network, dict)
-        or {key: value for key, value in network.items() if key != "action_grid"}
+        or {
+            key: value
+            for key, value in network.items()
+            if key not in ("action_grid", "action_dim", "action_low", "action_high")
+        }
         != NETWORK
     ):
         raise ValueError("Unrecognized TorchRL network architecture")
-    if saved.get("format") == POSE_FORMAT:
+    if saved.get("format") == PUSHT_FORMAT:
+        config = PosePushConfig.from_checkpoint(saved["pose_config"])
+        if (
+            getattr(config, "task_type", None) != "pusht"
+            or saved.get("num_robots") != config.num_robots
+            or saved.get("obs_dim") != config.observation_dim
+            or network.get("action_dim") != 2
+            or (network.get("action_low"), network.get("action_high"))
+            != (-config.workspace_half_extent, config.workspace_half_extent)
+        ):
+            raise ValueError(
+                "Push-T checkpoint has an inconsistent task or action layout"
+            )
+    elif saved.get("format") == POSE_FORMAT:
         config = PosePushConfig.from_checkpoint(saved["pose_config"])
         if saved.get("num_robots") != config.num_robots or saved.get(
             "obs_dim"
@@ -375,7 +433,12 @@ def load_mappo(path: str | Path, *, device="cpu"):
     else:
         raise ValueError("Unrecognized TorchRL checkpoint format")
     actor, critic = make_mappo_networks(
-        saved["num_robots"], saved["obs_dim"], action_grid=network.get("action_grid")
+        saved["num_robots"],
+        saved["obs_dim"],
+        action_grid=network.get("action_grid"),
+        action_dim=network.get("action_dim", 3),
+        action_low=network.get("action_low", -1),
+        action_high=network.get("action_high", 1),
     )
     actor.load_state_dict(saved["actor"])
     critic.load_state_dict(saved["critic"])

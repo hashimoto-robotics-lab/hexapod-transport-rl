@@ -1,3 +1,16 @@
+# 現在のGPU Push-T
+
+学生用の標準は `TorchRLTransportEnv(PushTConfig(), num_envs=1024, backend="auto")` です。
+XY目標の追従・元の歩行モデル・モーター・接触・面積計算・観測・MAPPOはGPUで実行します。
+CPUへの毎ステップの状態転送や、cargoへの外力は使いません。元の物理solver・接触容量も変えていません。
+
+面積は物理モデルと同じ2矩形の凸多角形クリッピングです。CPUはNumPy、GPUはTorchで計算し、
+公式が使うShapelyの交差面積とランダム姿勢・一致辺・回転姿勢で照合します。
+接触容量不足と非有限値はロールアウトごとに確認します。部分resetで他の世界の歩行履歴を消しません。
+
+[新仕様の対応表](pusht-protocol.md)・[新しい実測](results/pusht_protocol_20261013.json)を参照してください。
+以下の時間・成功率は旧課題の記録で、新しい95% coverage課題の実績ではありません。
+
 # MuJoCo Warpで物理と学習をGPUへ移す
 
 現在の課題は[等長2棒・T→ゴール→ロボットからの回り込み](pose-task.md)です。

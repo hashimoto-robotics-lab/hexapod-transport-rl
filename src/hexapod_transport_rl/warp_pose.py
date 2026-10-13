@@ -44,13 +44,18 @@ def cargo_coordinates(vector, yaw):
 class WarpPoseWorlds:
     """Batched pose physics for TorchRL, with tensor reset/step and no autoreset."""
 
+    reference_env_type = PosePushEnv
+
     def __init__(self, config, num_envs, asset_root=None, device="cuda:0"):
         self.config = self.pending_config = config
         self.num_envs, self.num_robots = num_envs, config.num_robots
         self.device = torch.device(device)
         self.approach_distance = PushApproachDistance(config, device=self.device)
-        self.reference = PosePushEnv(config, asset_root, render_mode="rgb_array")
+        self.reference = self.reference_env_type(
+            config, asset_root, render_mode="rgb_array"
+        )
         self.single_observation_space = self.reference.observation_space
+        self.single_action_space = self.reference.action_space
         self.provenance = self.reference.provenance
         core = self.reference.core
         self.physics = WarpPhysics(core, num_envs, self.device)
@@ -216,8 +221,12 @@ class WarpPoseWorlds:
         ):
             field = getattr(self, name)
             field.copy_(torch.where(mask, value, field))
+        self._finish_reset(mask)
         self.physics.forward()
         return self.observe(), {"is_success": torch.zeros_like(mask)}
+
+    def _finish_reset(self, mask):
+        """Optional rigid reset-frame transform for fixed-goal task variants."""
 
     def coordinates(self):
         p = self.physics

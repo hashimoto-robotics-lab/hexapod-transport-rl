@@ -57,7 +57,12 @@ class TorchRLTransportEnv(EnvBase):
                 raise TypeError("Warp currently supports PosePushConfig")
             from .warp_pose import WarpPoseWorlds
 
-            self.worlds = WarpPoseWorlds(config, num_envs, asset_root, device)
+            worlds_type = WarpPoseWorlds
+            if getattr(config, "task_type", None) == "pusht":
+                from .warp_pusht import WarpPushTWorlds
+
+                worlds_type = WarpPushTWorlds
+            self.worlds = worlds_type(config, num_envs, asset_root, device)
             asynchronous = False
         elif isinstance(config, ApproachConfig):
             self.worlds = make_approach_vector(
@@ -78,6 +83,8 @@ class TorchRLTransportEnv(EnvBase):
         else:
             raise TypeError("config must be ApproachConfig or PushConfig")
         self.num_robots, self.obs_dim = self.worlds.single_observation_space.shape
+        action_space = self.worlds.single_action_space
+        self.action_dim = action_space.shape[-1]
         self.asynchronous = asynchronous
         self.config = config
         self.provenance = self.worlds.call("provenance")[0]
@@ -99,7 +106,14 @@ class TorchRLTransportEnv(EnvBase):
         self.action_spec = Composite(
             agents=Composite(
                 action=Bounded(
-                    -1, 1, shape=(num_envs, self.num_robots, 3), device=device
+                    torch.as_tensor(action_space.low, device=device).expand(
+                        num_envs, -1, -1
+                    ),
+                    torch.as_tensor(action_space.high, device=device).expand(
+                        num_envs, -1, -1
+                    ),
+                    shape=(num_envs, self.num_robots, self.action_dim),
+                    device=device,
                 ),
                 shape=(num_envs, self.num_robots),
                 device=device,

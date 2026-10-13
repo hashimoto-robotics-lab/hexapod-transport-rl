@@ -133,21 +133,22 @@ def test_reward_parameters_flow_directly_to_training_and_paired_evaluation():
     assert "config=config" in source
     assert "from torchrl.collectors import Collector" in source
     assert "total_frames=TRAINING_STEPS" in source
-    assert 'value_normalizer_state=common["value_normalizer"]' in source
+    assert "make_mappo_loss(actor, critic, settings)" in source
     assert "buffer.empty()" in source
     assert "save_mappo(" in source
     assert "train_approach(" not in source
-    assert "reward_weights=replace(baseline_reward" in source
+    assert "reward_weights=changed_reward" in source
     assert "seed=TRAINING_SEED" in source
     assert "seed=TEST_SEED" in source
     assert "PoseCurriculum(" in source
-    assert 'policy in ("forward", "feedback")' in source
+    assert "action_dim=2" in source
     assert "pushing_checkpoint=" not in source
-    assert 'gym.make("HexapodPosePush-v0"' in source
+    assert 'gym.make("HexapodPushT-v0"' in source
     assert "comparison.to_csv" in source
     assert "media.show_videos" in source
     assert 'torch.device("cuda" if torch.cuda.is_available() else "cpu")' in source
-    assert "load_mappo(COMMON_CHECKPOINT, device=DEVICE)" in source
+    assert "actor.to(DEVICE)" in source and "critic.to(DEVICE)" in source
+    assert "COMMON_CHECKPOINT" not in source
     assert "batch = batch.to(DEVICE)" in source
     assert "LazyTensorStorage(FRAMES_PER_BATCH, device=DEVICE)" in source
     assert "policy_device=envs.device" in source
@@ -155,10 +156,10 @@ def test_reward_parameters_flow_directly_to_training_and_paired_evaluation():
     assert "collector.update_policy_weights_()" in source
 
 
-def test_student_reward_experiment_has_two_independent_factors():
+def test_student_reward_experiment_preserves_official_coverage_baseline():
     from dataclasses import asdict
 
-    from hexapod_transport_rl import PosePushConfig
+    from hexapod_transport_rl import PushTConfig
 
     notebook = nbformat.read(NOTEBOOK, as_version=4)
     cell = next(
@@ -166,18 +167,15 @@ def test_student_reward_experiment_has_two_independent_factors():
         for cell in notebook.cells
         if cell.cell_type == "code" and "baseline_reward =" in cell.source
     )
-    namespace = {"PosePushConfig": PosePushConfig, "PROJECT_DIR": ROOT}
+    namespace = {"PushTConfig": PushTConfig}
     exec(cell, namespace)
     baseline = asdict(namespace["baseline_reward"])
-    for name, expected in (
-        ("baseline", set()),
-        ("time_cost", {"time"}),
-        ("body_cost", {"body_contact"}),
-        ("time_body_cost", {"time", "body_contact"}),
-    ):
-        config = namespace["conditions"][name]
-        changed = asdict(config.reward_weights)
-        assert {key for key in baseline if baseline[key] != changed[key]} == expected
-        assert config.episode_seconds == 40
+    changed = asdict(namespace["changed_reward"])
+    assert baseline["coverage"] == 1
+    assert all(value == 0 for key, value in baseline.items() if key != "coverage")
+    assert {key for key in baseline if baseline[key] != changed[key]} == {"success"}
+    for config in namespace["conditions"].values():
+        assert config.coverage_threshold == 0.95
+        assert config.goal_pose == PushTConfig().goal_pose
         assert config.robot_start == "goal_side"
-        assert config.num_robots == 2
+        assert config.observation_dim == 9

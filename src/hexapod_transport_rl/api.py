@@ -178,11 +178,9 @@ class HexapodPushEnv(gym.Env):
             raise gym.error.ResetNeeded("Episode ended; call reset() before step()")
         action = np.asarray(action, dtype=np.float32)
         if not self.action_space.contains(action):
-            raise ValueError(
-                f"Action must be finite, in [-1,1], with shape {self.action_space.shape}"
-            )
+            raise ValueError(f"Action must be finite and within {self.action_space}")
         obs, reward, terminated, truncated, info = self.core.step(
-            action.reshape(self.num_robots, 3),
+            action.reshape(self.num_robots, getattr(self.core, "action_dim", 3)),
             on_control_step=self._record_frame
             if self.render_mode == "rgb_array_list"
             else None,

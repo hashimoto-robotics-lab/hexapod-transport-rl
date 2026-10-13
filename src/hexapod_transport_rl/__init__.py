@@ -9,6 +9,7 @@ from .env import PushEnv
 from .pose_evaluation import evaluate_pose, rule_action
 from .pose_push import POSE_ENV_ID, POSE_STAGES, PosePushConfig, PosePushEnv, PoseStage
 from .pose_training import PoseCurriculum
+from .pusht import PUSHT_ENV_ID, PushTConfig, PushTEnv, PushTRewardWeights
 from .rewards import ApproachRewardWeights, PoseRewardWeights, PushRewardWeights
 from .torchrl_env import TorchRLTransportEnv
 from .torchrl_mappo import (
@@ -26,6 +27,10 @@ from .walking import WalkingSimulation
 from .walking_env import WALKING_ENV_ID, WalkingEnv
 
 __all__ = [
+    "PushTConfig",
+    "PushTEnv",
+    "PushTRewardWeights",
+    "PUSHT_ENV_ID",
     "WalkingSimulation",
     "PosePushConfig",
     "PoseCurriculum",

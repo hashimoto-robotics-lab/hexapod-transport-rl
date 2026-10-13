@@ -145,6 +145,10 @@ class PosePushConfig(PushConfig):
     def from_checkpoint(cls, saved: dict):
         """Keep the geometry and near-cargo starts of older pose checkpoints."""
         saved = dict(saved)
+        if saved.get("task_type") == "pusht":
+            from .pusht import PushTConfig
+
+            return PushTConfig(**saved)
         if "reward_weights" in saved:
             saved["reward_weights"] = {
                 "approach_error": 0.0,
@@ -452,6 +456,10 @@ class PosePushEnv(HexapodPushEnv):
 
 def _worker_pose(config, asset_root, torch_threads):
     torch.set_num_threads(torch_threads)
+    if getattr(config, "task_type", None) == "pusht":
+        from .pusht import PushTEnv
+
+        return PushTEnv(config, asset_root)
     return PosePushEnv(config, asset_root)
 
 

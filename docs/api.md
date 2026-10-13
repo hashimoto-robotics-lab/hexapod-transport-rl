@@ -1,3 +1,33 @@
+# 現在の協調Push-T API
+
+学生用の標準は `PushTConfig`・`PushTEnv`・`HexapodPushT-v0` です。
+[公式との対応と全仕様](pusht-protocol.md)を先に確認してください。
+
+```python
+from hexapod_transport_rl import PushTConfig, PushTEnv
+import numpy as np
+
+env = PushTEnv(PushTConfig(num_robots=2, obs_type="state"))
+observation, info = env.reset(seed=42)
+targets = np.asarray(info["agent_pos"], dtype=np.float32)
+observation, reward, terminated, truncated, info = env.step(targets)
+env.close()
+```
+
+2台の観測はstate版 `(2,9)`、keypoints版 `(2,22)`。行動は世界XY目標 [m] の `(2,2)` です。
+`info`には `agent_pos`・`block_pose`・`goal_pose`・`coverage`・`reward_terms` と物理の診断が入ります。
+`coverage > .95`で成功し、旧仕様の位置・角度・静止時間は判定に使いません。
+`PushTRewardWeights()`は面積報酬だけで、追加の成功・時間・接触の項は研究条件として明示します。
+
+`TorchRLTransportEnv(config=PushTConfig(), backend="auto")`はCUDAがあればWarpを使います。
+ネットワークは `make_mappo_networks(..., action_dim=2, action_low=-4, action_high=4)` で作ります。
+`policy_action()`はGymにそのまま渡せるメートル単位のXY目標を返します。
+保存・評価は従来と同じ `save_mappo()`・`load_mappo()`・`evaluate_pose()` で、新しい保存形式から課題を判別します。
+評価には `mean_coverage`・`mean_max_coverage` と各試行の値も入ります。
+旧モデルと新しい環境を組み合わせた評価は、観測・行動の互換性がないため拒否します。
+
+以下の歩行APIは共通です。`HexapodPosePush-v0`の項目は、以前の姿勢誤差型の課題を再現するための説明です。
+
 # 歩行コマンドと学習環境API
 
 実行手順は [README](../README.md)、内部構造は [コードガイド](code-guide.md) を参照してください。
@@ -41,6 +71,7 @@ media.show_video(frames, fps=5)
 | 環境ID | 対応台数 | 観測 | 行動 |
 |---|---|---|---|
 | `HexapodWalking-v0` | 1〜4 | `(N, 6)` | `(N, 3)`、物理速度 |
+| `HexapodPushT-v0` | 2〜4 | state: `(N,3+3N)`、keypoints: `(N,16+3N)` | `(N,2)`、世界XY目標 [m] |
 | `HexapodPosePush-v0` | 2〜4 | `(N,18+4×(N−1))` | `(N,3)`、−1〜1 |
 | `HexapodPush-v0` (`flatten=False`) | 2〜4 | `(N, 16 + 4×(N−1))` | `(N, 3)`、−1〜1 |
 
