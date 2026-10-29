@@ -191,6 +191,12 @@ class StudentPushEnv(SinglePushEnv):
         """Current named physical state; custom terms must not mutate tensors."""
         return self._current_state
 
+    def render(self):
+        """Render the first world as an RGB image."""
+        if self.backend == "warp":
+            return self.worlds.render()
+        return self.worlds.envs[0].render()
+
     @property
     def observation_layout(self):
         offset, result = 0, []

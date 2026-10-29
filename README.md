@@ -15,6 +15,8 @@
 2. ランタイムを **T4 GPU** に変更します。
 3. 最初のセルを実行すると、GitHubから教材をcloneし、実行環境を準備します。
 
+Colabに入っているPyTorchをそのまま使います。
+
 取得先は `https://github.com/hashimoto-robotics-lab/hexapod-transport-rl.git`、既定のブランチは `main` です。
 別の公開済みブランチを使う場合は、最初のセルの `REVISION` を変更してください。
 再実行時は取得済みの教材を使い、学生の編集を保持します。最新版を取り直す場合は新しいセッションを使います。
@@ -33,7 +35,7 @@ MUJOCO_GL=egl .venv/bin/python tools/train_student.py \
   examples/student/baseline.py --output runs/smoke --smoke
 ```
 
-GPU環境はColabと同じ依存バージョンを使えます。
+ローカルGPUでは、検証済みの次の構成を使えます。
 CUDA対応PythonへPyTorch 2.11.0のCUDA 12.8版を導入してから、追加依存を入れます。
 `uv`の既定設定はCPU版PyTorchを使うため、GPU環境には下記の`pip`を使ってください。
 
@@ -63,6 +65,26 @@ run.video()
 [APIの説明・項目一覧](docs/student-api.md)と[Pythonサンプル](examples/student/README.md)を参照してください。
 独自関数は `.py` ファイルに置き、`load_task_file()`で読み込みます。
 保存時にソース・設定・依存バージョンも記録されます。
+
+## 報酬を変えて学習する例
+
+ColabのStep 5では、目標へ近づけたときの報酬を20から40に変更し、その場で新規学習・評価・動画の比較を行います。
+Step 7では、目標の近くで円柱が速く動くと減点する関数を書き、報酬だけを変更して学習します。
+各学習の保存先に時刻を付けるので、値を変えてセルを再実行できます。
+
+同じ課題をPythonファイルから学習する例もあります。
+
+```bash
+# 報酬の重みを変える
+.venv/bin/python tools/train_student.py examples/student/reward_weights.py \
+  --output runs/reward_weights_demo --smoke
+
+# 独自の報酬関数を追加する
+.venv/bin/python tools/train_student.py examples/student/reward_only.py \
+  --output runs/custom_reward_demo --smoke
+```
+
+本学習では`--smoke`を外し、CUDA対応Pythonで実行します。
 
 ## 課題と参照モデル
 

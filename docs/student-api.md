@@ -13,6 +13,8 @@
 
 [Step 0〜10のノートブック](../notebooks/student_api_colab.ipynb)を用意しています。
 最初のセルでGitHubから教材をcloneします。開き方と取得するブランチの指定は[README](../README.md#最初はcolabで学ぶ)を参照してください。
+Step 5は報酬の重みを変更して新規学習する例、Step 7は独自の報酬関数だけを追加して学習する例です。
+Colabに入っているPyTorchを保持するので、準備のためにPyTorchを入れ替える必要はありません。
 
 ## 最初に動かす
 

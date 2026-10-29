@@ -5,10 +5,13 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
-from hexapod_transport_rl.student import compare, load_task_file, train
+from colab_setup import quiet_dependency_notices
 
 
 def main():
+    quiet_dependency_notices()
+    from hexapod_transport_rl.student import compare, load_task_file, train
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("task_file", type=Path)
     parser.add_argument("--output", type=Path, required=True)
