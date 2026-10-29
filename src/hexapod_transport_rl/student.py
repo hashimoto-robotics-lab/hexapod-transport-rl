@@ -268,7 +268,7 @@ class CylinderPushTask:
     """Select policy inputs, actions and rewards; preserve articulated physics.
 
     Default: original 14 inputs/9 world choices/reward, with rotation disabled.
-    baseline() additionally enables the rotation used by the selected model.
+    baseline() additionally enables the common goal-octant rotation.
     """
 
     observations: tuple = ("baseline",)
@@ -331,7 +331,7 @@ class CylinderPushTask:
 
     @classmethod
     def baseline(cls):
-        """Same task, inputs, actions, reward and rotation as the selected model."""
+        """Standard inputs, actions and rewards with goal-octant rotation."""
         return cls(rotation="goal_octant")
 
     @property
@@ -521,11 +521,14 @@ def train(
     validate_every=20,
     initial_checkpoint=None,
     checkpoint_selection="best",
+    curriculum=None,
 ):
     """Run the existing ClipPPOLoss/GAE loop with a student task.
 
     A fresh actor/critic is the default. initial_checkpoint explicitly requests
     compatible actor/critic weights and a fresh optimizer, not a resumed run.
+    curriculum schedules reset distributions and learning rates in this same
+    run; actor, critic and optimizer are retained across phases.
     checkpoint_selection='latest' reports the final updated policy, including
     for evaluate(), video() and compare(); 'best' selects using validation.
     """
@@ -554,6 +557,7 @@ def train(
         validate_every=validate_every,
         initial_checkpoint=initial_checkpoint,
         checkpoint_selection=checkpoint_selection,
+        curriculum=curriculum,
         student_task=task,
     )
     return TrainingRun(

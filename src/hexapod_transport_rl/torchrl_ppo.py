@@ -521,6 +521,7 @@ def train_ppo(
     validation_envs=None,
     student_task=None,
     checkpoint_selection="best",
+    curriculum=None,
 ):
     """Train PPO, optionally fine-tuning compatible weights with a fresh Adam."""
     if not isinstance(config, SinglePushConfig):
@@ -559,6 +560,13 @@ def train_ppo(
     ):
         raise ValueError("Rear bootstrap requires a pure front final task")
     settings = settings or PPOSettings()
+    if curriculum is not None:
+        from .curriculum import PushCurriculum
+
+        if not isinstance(curriculum, PushCurriculum) or bootstrap_rollouts:
+            raise ValueError("Use PushCurriculum without bootstrap_rollouts")
+        for phase in curriculum.phases:
+            phase.apply(config)
     if student_task is not None:
         if student_task.config != config or student_task.action_mode != action_mode:
             raise ValueError(
@@ -577,6 +585,9 @@ def train_ppo(
 
             capture_world_step(env.worlds)
         env.set_seed(seed)
+        current_phase = curriculum.phase_at(0, steps // frames) if curriculum else None
+        if current_phase is not None:
+            env.set_reset_stage(current_phase)
         if bootstrap_rollouts:
             env.set_reset_stage(SinglePushResetStage("mixed_rear_bootstrap", 0.25))
         network = dict(
@@ -723,7 +734,9 @@ def train_ppo(
             else "worst 30-degree sector success rate, total successes, mean distance"
             if config.spawn_mode == "around"
             else "total successes, mean distance",
-            curriculum=(
+            curriculum=asdict(curriculum)
+            if curriculum is not None
+            else (
                 dict(
                     initial_rear_fraction=0.25,
                     final_rear_fraction=0.0,
@@ -784,8 +797,8 @@ def train_ppo(
         rows, durations, validations = [], [], []
         best = (-1, float("-inf"))
         if config.spawn_mode == "around" or student_task is not None:
-            # Preserve transferred weights if PPO initially regresses.
-            best = _validation_score(config, initial)
+            if curriculum is None:
+                best = _validation_score(config, initial)
             metadata.update(steps=0, rollouts=0, seconds=time.monotonic() - started)
             save("best.pt")
 
@@ -808,13 +821,16 @@ def train_ppo(
                 row["validation_worst_goal_rate"] = min(
                     s["success_rate"] or 0.0 for s in report["goal_sectors"]
                 )
-            if score > best:
+            eligible = current_phase is None or current_phase == curriculum.phases[-1]
+            if eligible and score > best:
                 best = score
                 metadata.update(
                     steps=row["steps"],
                     rollouts=row["rollout"],
                     seconds=time.monotonic() - started,
                 )
+                if current_phase is not None:
+                    metadata["training_stage"] = current_phase.name
                 save("best.pt")
             row["validation_successes"] = report["successes"]
             (output / "validations.json").write_text(
@@ -829,6 +845,13 @@ def train_ppo(
             ):
                 break
             batch_started = time.monotonic()
+            if curriculum is not None:
+                phase = curriculum.phase_at(rollout, steps // frames)
+                if phase != current_phase:
+                    env.set_reset_stage(phase)
+                    current_phase = phase
+                for group in optimizer.param_groups:
+                    group["lr"] = settings.learning_rate * phase.learning_rate_scale
             if bootstrap_rollouts and rollout == bootstrap_rollouts:
                 env.set_reset_stage(SinglePushResetStage("front_only", 0.0))
                 metadata["front_only_started_at_step"] = rollout * frames
@@ -865,6 +888,9 @@ def train_ppo(
                 episodes=int(batch["next", "done"].sum()),
                 successes=int((batch["next", "done"] & batch["next", "success"]).sum()),
             )
+            if current_phase is not None:
+                row["curriculum_stage"] = current_phase.name
+                row["learning_rate"] = optimizer.param_groups[0]["lr"]
             if student_task is not None:
                 row["reward_terms"] = {
                     name: float(batch["next", "reward_terms", name].mean())
@@ -890,7 +916,9 @@ def train_ppo(
             seconds=time.monotonic() - started,
             stopped_by="step_budget" if len(rows) == steps // frames else "time_budget",
             training_stage=(
-                "fixed_task"
+                current_phase.name
+                if current_phase is not None
+                else "fixed_task"
                 if not bootstrap_rollouts
                 else "front_only"
                 if len(rows) > bootstrap_rollouts

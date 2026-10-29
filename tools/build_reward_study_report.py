@@ -116,14 +116,11 @@ def draw_curves(curves, records, output):
             ax.fill_between(x, low, high, alpha=0.13, color=COLORS[condition])
     axes[0].set(
         ylabel="Validation success rate",
-        ylim=(
-            max(0, curves.validation_success_rate.min() - 0.03),
-            min(1, max(0.1, curves.validation_success_rate.max() * 1.4)),
-        ),
+        ylim=(0, 1.02),
     )
     axes[1].set(ylabel="Validation final goal distance [m]")
     for ax in axes:
-        ax.set_xlabel("Additional training samples [million]")
+        ax.set_xlabel("Training samples [million]")
         ax.grid(alpha=0.2)
         ax.legend(fontsize=9)
     fig.suptitle(
@@ -201,6 +198,11 @@ def build(source, output):
                 output / "evaluations" / f"{condition}_s{seed}.json",
             )
             initial = json.loads((run / "initial_evaluation.json").read_text())
+            training_rows = json.loads((run / "progress.json").read_text())
+            stages = {
+                entry["steps"]: entry.get("curriculum_stage", "fixed_task")
+                for entry in training_rows
+            }
             row["initial_validation_success_rate"] = (
                 initial["successes"] / initial["episode_count"]
             )
@@ -224,6 +226,7 @@ def build(source, output):
                         condition=condition,
                         seed=seed,
                         steps=steps,
+                        curriculum_stage=stages.get(steps, "initial"),
                         validation_success_rate=report["successes"]
                         / report["episode_count"],
                         validation_distance_m=report["mean_distance_m"],
@@ -244,7 +247,7 @@ def build(source, output):
                         selected=steps == row["selected_steps"],
                     )
                 )
-            for update in json.loads((run / "progress.json").read_text()):
+            for update in training_rows:
                 flat = {
                     key: value for key, value in update.items() if key != "reward_terms"
                 }

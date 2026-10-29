@@ -46,6 +46,14 @@ def main():
         report = run.evaluate(backend="warp", **EVALUATION)
         metadata = json.loads((run.directory / "run.json").read_text())
         selected = torch.load(run.checkpoint, map_location="cpu", weights_only=True)
+        initial = torch.load(
+            run.directory / "initial.pt", map_location="cpu", weights_only=True
+        )
+        updates = json.loads((run.directory / "progress.json").read_text())
+        optimizer_steps = {
+            int(state["step"]) for state in selected["optimizer"]["state"].values()
+        }
+        assert len(optimizer_steps) == 1
         result = dict(
             condition=args.condition,
             seed=seed,
@@ -56,6 +64,20 @@ def main():
             episodes=report["episode_count"],
             success_rate=report["successes"] / report["episode_count"],
             mean_distance_m=report["mean_distance_m"],
+            initialization=metadata["initialization"],
+            initial_optimizer_entries=len(initial["optimizer"]["state"]),
+            optimizer_steps=optimizer_steps.pop(),
+            full_task_steps=sum(
+                metadata["num_envs"] * metadata["horizon"]
+                for row in updates
+                if row.get("curriculum_stage") == "full_task"
+            ),
+            selected_full_task_steps=sum(
+                metadata["num_envs"] * metadata["horizon"]
+                for row in updates
+                if row.get("curriculum_stage") == "full_task"
+                and row["steps"] <= selected["training"]["steps"]
+            ),
             gpu=torch.cuda.get_device_name(0),
             python=platform.python_version(),
             torch=str(torch.__version__),

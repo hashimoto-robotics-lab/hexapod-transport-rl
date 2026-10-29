@@ -1,5 +1,6 @@
 """Student API for single-hexapod cylinder pushing with TorchRL PPO."""
 
+from .curriculum import PushCurriculum, PushPhase
 from .single_push import SinglePushConfig, SinglePushEnv
 from .student import (
     ContinuousVelocity,
@@ -29,6 +30,8 @@ __all__ = [
     "PushState",
     "TrainingRun",
     "PPOSettings",
+    "PushCurriculum",
+    "PushPhase",
     "train",
     "evaluate",
     "compare",

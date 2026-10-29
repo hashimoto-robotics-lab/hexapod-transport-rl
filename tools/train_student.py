@@ -10,7 +10,13 @@ from colab_setup import quiet_dependency_notices
 
 def main():
     quiet_dependency_notices()
-    from hexapod_transport_rl import PPOSettings, compare, load_task_file, train
+    from hexapod_transport_rl import (
+        PPOSettings,
+        PushCurriculum,
+        compare,
+        load_task_file,
+        train,
+    )
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("task_file", type=Path)
@@ -25,6 +31,7 @@ def main():
     parser.add_argument("--validation-envs", type=int)
     parser.add_argument("--validate-every", type=int, default=20)
     parser.add_argument("--initial-checkpoint", type=Path)
+    parser.add_argument("--curriculum", action="store_true")
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--entropy-coeff", type=float, default=0.01)
     parser.add_argument(
@@ -57,6 +64,7 @@ def main():
         validation_envs=args.validation_envs,
         validate_every=args.validate_every,
         initial_checkpoint=args.initial_checkpoint,
+        curriculum=PushCurriculum() if args.curriculum else None,
         checkpoint_selection=args.checkpoint_selection,
         settings=PPOSettings(
             learning_rate=args.learning_rate, entropy_coeff=args.entropy_coeff
