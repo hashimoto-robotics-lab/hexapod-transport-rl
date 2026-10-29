@@ -239,7 +239,7 @@ def test_old_checkpoint_transfer_checks_semantics_even_with_same_dimensions(tmp_
     )
     task = replace(load_task(old), rewards={"goal_progress": 3.0})
     run = train(
-        task,
+        replace(task, config=replace(task.config, episode_seconds=0.6)),
         tmp_path / "new",
         initial_checkpoint=old,
         steps=8,
@@ -248,7 +248,13 @@ def test_old_checkpoint_transfer_checks_semantics_even_with_same_dimensions(tmp_
         backend="cpu",
         validate_every=1,
         settings=SETTINGS,
+        checkpoint_selection="latest",
     )
+    assert run.checkpoint == run.latest
+    assert run.best.is_file()
+    metadata = json.loads((run.directory / "run.json").read_text())
+    assert metadata["checkpoint_selection"] == "latest"
+    assert metadata["steps"] == 8
     original, _, _, _ = load_ppo(old)
     copied, _, _, _ = load_ppo(run.directory / "initial.pt")
     for name, value in original["actor"].items():

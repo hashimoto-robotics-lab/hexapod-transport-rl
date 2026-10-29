@@ -520,6 +520,7 @@ def train_ppo(
     initial_checkpoint=None,
     validation_envs=None,
     student_task=None,
+    checkpoint_selection="best",
 ):
     """Train PPO, optionally fine-tuning compatible weights with a fresh Adam."""
     if not isinstance(config, SinglePushConfig):
@@ -530,6 +531,8 @@ def train_ppo(
         raise ValueError("Learning budgets must be positive")
     if validation_envs is not None and validation_envs < 1:
         raise ValueError("Validation world count must be positive")
+    if checkpoint_selection not in ("best", "latest"):
+        raise ValueError("checkpoint_selection must be best or latest")
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     if any(
@@ -616,6 +619,7 @@ def train_ppo(
                         "Checkpoint observation/action semantics differ; start a fresh model without initial_checkpoint"
                     )
             transfer_fields = {
+                "episode_seconds",
                 "approach_strategy",
                 "rear_approach_gain",
                 "approach_cost_weight",
@@ -695,6 +699,7 @@ def train_ppo(
                 if initial_checkpoint is not None
                 else None
             ),
+            checkpoint_selection=checkpoint_selection,
             provenance=env.provenance,
             capture_step=bool(capture_step and gpu),
             bootstrap_rollouts=bootstrap_rollouts,

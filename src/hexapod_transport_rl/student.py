@@ -486,10 +486,11 @@ class TrainingRun:
     directory: Path
     latest: Path
     best: Path
+    selection: str = "best"
 
     @property
     def checkpoint(self):
-        return self.best
+        return self.latest if self.selection == "latest" else self.best
 
     def evaluate(self, *, episodes=128, seed=240000, backend="auto"):
         result = evaluate(
@@ -519,11 +520,14 @@ def train(
     validation_envs=None,
     validate_every=20,
     initial_checkpoint=None,
+    checkpoint_selection="best",
 ):
     """Run the existing ClipPPOLoss/GAE loop with a student task.
 
     A fresh actor/critic is the default. initial_checkpoint explicitly requests
     compatible actor/critic weights and a fresh optimizer, not a resumed run.
+    checkpoint_selection='latest' reports the final updated policy, including
+    for evaluate(), video() and compare(); 'best' selects using validation.
     """
     from .torchrl_ppo import train_ppo
 
@@ -549,10 +553,14 @@ def train(
         validation_envs=validation_envs,
         validate_every=validate_every,
         initial_checkpoint=initial_checkpoint,
+        checkpoint_selection=checkpoint_selection,
         student_task=task,
     )
     return TrainingRun(
-        Path(output).resolve(), latest.resolve(), (Path(output) / "best.pt").resolve()
+        Path(output).resolve(),
+        latest.resolve(),
+        (Path(output) / "best.pt").resolve(),
+        checkpoint_selection,
     )
 
 
