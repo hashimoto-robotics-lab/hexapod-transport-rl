@@ -4,27 +4,23 @@ PushConfig is serialized into checkpoints: keep field names/defaults compatible.
 Lengths are meters, angles radians, time seconds, mass kilograms.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 from numpy.typing import ArrayLike
 
-from .rewards import PushRewardWeights
 from .types import FloatArray
 
-# Joint order and neutral pose must match the exported walking controller.
 LEGS = ("LF", "LM", "LH", "RF", "RM", "RH")
 JOINT_NAMES = tuple(
-    f"{leg}_{part}_joint" for leg in LEGS for part in ("coxa", "femur", "tibia")
+    (f"{leg}_{part}_joint" for leg in LEGS for part in ("coxa", "femur", "tibia"))
 )
-STAND = np.tile([0.0, 0.45, 0.90], 6)
+STAND = np.tile([0.0, 0.45, 0.9], 6)
 STAND_HEIGHT = 0.16
-# Body-frame velocity limits: forward, lateral, yaw. Reverse speed is asymmetric.
-COMMAND_LOW = np.array([-0.15, -0.10, -0.60], dtype=np.float32)
-COMMAND_HIGH = np.array([0.20, 0.10, 0.60], dtype=np.float32)
+COMMAND_LOW = np.array([-0.15, -0.1, -0.6], dtype=np.float32)
+COMMAND_HIGH = np.array([0.2, 0.1, 0.6], dtype=np.float32)
 COMMAND_LIMIT = np.maximum(-COMMAND_LOW, COMMAND_HIGH)
-# One walking tick is eight physics ticks; a high-level step holds several ticks.
 PHYSICS_DT = 0.005
 CONTROL_DT = 0.04
 PHYSICS_STEPS = 8
@@ -61,104 +57,49 @@ def find_asset_root() -> Path:
 
 @dataclass(frozen=True)
 class PushConfig:
-    """Physical task and episode settings, shared by all API adapters.
+    num_robots: int = 1
+    shape: str = "cylinder"
 
-    ``shape`` defaults to a box; use "T" explicitly for T-shaped cargo.
-    ``high_level_decimation`` is walking-policy ticks per high-level action.
-    ``push_gap`` is rear cargo face to desired robot center, not foot clearance.
-    """
-
-    # Team and cargo.
-    num_robots: int = 2
-    shape: str = "box"
-    cargo_mass: float = 2.0
-    cargo_friction: float = 0.3
-    t_geometry: str = "equal_bars"
-    # Goal, episode horizon and control timing.
-    goal_distance: float = 2.0
-    episode_seconds: float = 40.0
-    high_level_decimation: int = 5
-    # Success thresholds: m, rad, seconds held inside tolerance.
-    position_tolerance: float = 0.18
-    yaw_tolerance: float = 0.25
-    success_hold_seconds: float = 0.5
-    # Arena and desired pushing formation, in meters.
-    arena_radius: float = 8.0
-    push_gap: float = 0.30
-    reward_weights: PushRewardWeights = field(default_factory=PushRewardWeights)
-
-    def __post_init__(self) -> None:
-        if isinstance(self.reward_weights, dict):
-            object.__setattr__(
-                self, "reward_weights", PushRewardWeights(**self.reward_weights)
-            )
-        if not isinstance(self.num_robots, int) or not 2 <= self.num_robots <= 4:
-            raise ValueError("num_robots must be an integer between 2 and 4")
-        if self.t_geometry not in ("equal_bars", "equal_arms", "legacy"):
-            raise ValueError("Unknown T geometry")
-        if self.shape not in ("box", "T"):
-            raise ValueError("shape must be box or T")
-        if (
-            not isinstance(self.high_level_decimation, int)
-            or self.high_level_decimation < 1
-        ):
-            raise ValueError("high_level_decimation must be a positive integer")
+    def __post_init__(self):
+        if self.num_robots != 1 or self.shape != "cylinder":
+            raise ValueError("This package supports one hexapod and cylindrical cargo")
         values = (
             self.cargo_mass,
             self.cargo_friction,
+            self.cargo_radius,
             self.goal_distance,
             self.episode_seconds,
             self.position_tolerance,
-            self.yaw_tolerance,
             self.success_hold_seconds,
             self.arena_radius,
             self.push_gap,
         )
         if not np.isfinite(values).all() or min(values) <= 0:
             raise ValueError(
-                "Mass, friction, distances, tolerances and durations must be positive and finite"
+                "Physical dimensions, mass, friction and durations must be positive and finite"
             )
-        if self.goal_distance + self.width / 2 + 1 >= self.arena_radius:
-            raise ValueError("Goal must fit within the arena")
+        if (
+            not isinstance(self.high_level_decimation, int)
+            or self.high_level_decimation < 1
+        ):
+            raise ValueError("high_level_decimation must be a positive integer")
+
+    @property
+    def width(self):
+        return 2 * self.cargo_radius
+
+    @property
+    def depth(self):
+        return self.width
+
+    @property
+    def rear_face(self):
+        return -self.cargo_radius
 
     @property
     def dt(self) -> float:
         """Simulated seconds per high-level step (default 0.2 s)."""
         return CONTROL_DT * self.high_level_decimation
-
-    @property
-    def width(self) -> float:
-        """Cargo extent along its local Y axis, wide enough for N robots."""
-        return self.num_robots * 0.65
-
-    @property
-    def depth(self) -> float:
-        """Cargo extent along its local X axis."""
-        if self.shape == "box":
-            return 0.45
-        return 0.7 if self.t_geometry == "legacy" else self.t_stem_length + 0.1
-
-    @property
-    def t_arm_length(self) -> float:
-        """Junction to either lateral endpoint of the crossbar, in meters."""
-        return self.width / 2
-
-    @property
-    def t_stem_length(self) -> float:
-        """Junction to stem tip; equal bars use the full crossbar length."""
-        return self.width if self.t_geometry == "equal_bars" else self.t_arm_length
-
-    @property
-    def rear_face(self) -> float:
-        """Rear cargo surface in local X; equal-arm T origin is its junction."""
-        if self.shape == "T" and self.t_geometry != "legacy":
-            return -0.1
-        return -self.depth / 2
-
-    @classmethod
-    def from_checkpoint(cls, saved: dict):
-        """Older checkpoints explicitly retain the footprint they learned on."""
-        return cls(**{"t_geometry": "legacy", **saved})
 
     @property
     def cargo_height(self) -> float:
@@ -176,7 +117,7 @@ class PushConfig:
 
 def rotation(yaw: float) -> np.ndarray:
     """2D rotation; a world-frame row vector @ rotation(yaw) is body-frame."""
-    c, s = np.cos(yaw), np.sin(yaw)
+    c, s = (np.cos(yaw), np.sin(yaw))
     return np.array([[c, -s], [s, c]])
 
 

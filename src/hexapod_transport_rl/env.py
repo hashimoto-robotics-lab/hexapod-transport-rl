@@ -1,7 +1,7 @@
-"""Physical team environment beneath the Gymnasium adapter.
+"""Shared native physics operations specialized by the cylinder task.
 
-A high-level step runs the frozen walking policy, advances MuJoCo, measures
-contacts, then computes termination and a shared team reward. See docs/code-guide.md.
+A high-level step runs the frozen walker, advances MuJoCo, measures contacts,
+then computes termination and reward.
 """
 
 from collections.abc import Callable
@@ -13,21 +13,17 @@ import torch
 from numpy.typing import ArrayLike
 
 from .config import (
-    COMMAND_LIMIT,
     PHYSICS_STEPS,
-    STAND_HEIGHT,
     PushConfig,
     action_to_command,
     find_asset_root,
-    rotation,
     wrap,
 )
-from .contacts import BODY, ContactTracker
+from .contacts import ContactTracker
 from .locomotion import WalkingController
 from .model import build_model
 from .types import Info, Observation, ResetResult, StepResult
 
-# Physical failure/settling thresholds; distances in m and speeds in m/s or rad/s.
 MIN_ROBOT_HEIGHT = 0.08
 MIN_ROBOT_UPRIGHT = 0.5
 MIN_CARGO_UPRIGHT = 0.7
@@ -58,7 +54,6 @@ class PushEnv:
         )
         self._index_model()
         self.contacts = ContactTracker(self.model, self.cfg.num_robots)
-        # Preserve the diagnostic geom lookup attributes of the original API.
         self.geom_owner = self.contacts.geom_owner
         self.geom_kind = self.contacts.geom_kind
         self.rng = np.random.default_rng()
@@ -70,8 +65,8 @@ class PushEnv:
         """Expose robot diagnostics and index the cargo separately from walking."""
         self.base_ids = self.walking.base_ids
         self.gyro_indices = self.walking.gyro_indices
-        self.root_q, self.root_v = self.walking.root_q, self.walking.root_v
-        self.joint_q, self.joint_v = self.walking.joint_q, self.walking.joint_v
+        self.root_q, self.root_v = (self.walking.root_q, self.walking.root_v)
+        self.joint_q, self.joint_v = (self.walking.joint_q, self.walking.joint_v)
         self.actuators = self.walking.actuators
         self.controller = self.walking.controller
         self.policy_metadata = self.walking.policy_metadata
@@ -101,17 +96,6 @@ class PushEnv:
     def cargo_yaw(self) -> float:
         return float(self.yaw([self.cargo_id])[0])
 
-    def push_positions(self) -> np.ndarray:
-        """Desired robot centers (N,2) behind the cargo, in world coordinates."""
-        # Front feet stand 0.258 m ahead along +X. Keep the body behind the box.
-        local = np.column_stack(
-            (
-                np.full(self.cfg.num_robots, self.cfg.rear_face - self.cfg.push_gap),
-                self.cfg.slots,
-            )
-        )
-        return local @ rotation(self.cargo_yaw).T + self.cargo_xy
-
     def reset(self, seed: int | None = None, randomize: bool = False) -> ResetResult:
         """Initialize an episode; preserve the RNG stream when seed is None."""
         if seed is not None:
@@ -126,92 +110,7 @@ class PushEnv:
         self.done = False
         mujoco.mj_forward(self.model, self.data)
         self.initial_xy = self.cargo_xy
-        return self.observe(), self.info()
-
-    def _reset_cargo_and_goal(self, randomize: bool) -> float:
-        """Sample the common task heading and place cargo plus goal marker."""
-        heading = self.rng.uniform(-np.pi, np.pi) if randomize else 0.0
-        cargo_heading = heading + (self.rng.uniform(-0.12, 0.12) if randomize else 0)
-        self.goal_yaw = heading
-        local_goal = [
-            self.cfg.goal_distance,
-            self.rng.uniform(-0.20, 0.20) if randomize else 0,
-        ]
-        self.goal = rotation(heading) @ local_goal
-        goal_id = self.model.body("goal").id
-        self.model.body_pos[goal_id] = (*self.goal, self.cfg.cargo_height / 2)
-        self.model.body_quat[goal_id] = (np.cos(heading / 2), 0, 0, np.sin(heading / 2))
-        cq = self.cargo_q
-        self.data.qpos[cq : cq + 7] = (
-            0,
-            0,
-            self.cfg.cargo_height / 2 + 0.002,
-            np.cos(cargo_heading / 2),
-            0,
-            0,
-            np.sin(cargo_heading / 2),
-        )
-        return cargo_heading
-
-    def _reset_robot_poses(self, cargo_heading: float, randomize: bool) -> None:
-        """Place robots behind their assigned cargo slots, with optional jitter."""
-        for i, q in enumerate(self.root_q):
-            xy = rotation(cargo_heading) @ np.array(
-                [self.cfg.rear_face - self.cfg.push_gap - 0.10, self.cfg.slots[i]]
-            )
-            yaw = cargo_heading
-            if randomize:
-                xy += self.rng.uniform(-0.025, 0.025, 2)
-                yaw += self.rng.uniform(-0.06, 0.06)
-            self.data.qpos[q : q + 7] = (
-                *xy,
-                STAND_HEIGHT,
-                np.cos(yaw / 2),
-                0,
-                0,
-                np.sin(yaw / 2),
-            )
-
-    def observe(self) -> Observation:
-        """Local observations (N, 16 + 4*(N-1)), in stable robot order.
-
-        Own features occupy 0:16; each peer adds relative XY/3 m and yaw sin/cos.
-        Position and velocity vectors use the observing robot's body frame.
-        The feature order is part of the checkpoint contract (docs/api.md).
-        """
-        result = []
-        robot_xy, yaws = self.robot_xy, self.yaw(self.base_ids)
-        cargo_yaw = self.cargo_yaw
-        for i, yaw in enumerate(yaws):
-            body_rotation = rotation(yaw)
-            velocity = (
-                self.data.qvel[self.root_v[i] : self.root_v[i] + 2] @ body_rotation
-            )
-            own = np.concatenate(
-                (
-                    (self.cargo_xy - robot_xy[i]) @ body_rotation / 3,
-                    (self.goal - self.cargo_xy) @ body_rotation / 3,
-                    velocity,
-                    [self.data.qvel[self.root_v[i] + 5]],
-                    [np.sin(cargo_yaw - yaw), np.cos(cargo_yaw - yaw)],
-                    [np.sin(self.goal_yaw - yaw), np.cos(self.goal_yaw - yaw)],
-                    self.last_commands[i] / COMMAND_LIMIT,  # last normalized command
-                    [self.data.xmat[self.base_ids[i], 8]],
-                    [self.cfg.slots[i] / self.cfg.width],
-                )
-            )
-            peers = [
-                np.concatenate(
-                    (
-                        (robot_xy[j] - robot_xy[i]) @ body_rotation / 3,
-                        [np.sin(yaws[j] - yaw), np.cos(yaws[j] - yaw)],
-                    )
-                )
-                for j in range(self.cfg.num_robots)
-                if j != i
-            ]
-            result.append(np.concatenate((own, *peers)))
-        return np.asarray(result, dtype=np.float32)
+        return (self.observe(), self.info())
 
     def state(self) -> Observation:
         """Central critic receives all agent observations in stable robot order."""
@@ -255,20 +154,18 @@ class PushEnv:
             if "approach" in before
             else self._mean_approach_distance()
         )
-
         self._advance_physics(commands, on_control_step)
         self.steps += 1
         info = self.info()
         terminated, truncated = self._update_episode_status(info)
         reward_terms = self._reward_terms(before, info, previous_approach, commands)
-
         self.last_commands = commands
         self.done = terminated or truncated
         physics_steps = PHYSICS_STEPS * self.cfg.high_level_decimation
         info.update(self.contacts.as_info(physics_steps))
         info["reward_terms"] = reward_terms
         reward = float(sum(reward_terms.values()))
-        return self.observe(), reward, terminated, truncated, info
+        return (self.observe(), reward, terminated, truncated, info)
 
     def _advance_physics(
         self, commands: np.ndarray, on_control_step: Callable[[], None] | None
@@ -301,16 +198,16 @@ class PushEnv:
         settled = (
             info["distance"] < self.cfg.position_tolerance
             and info["yaw_error"] < self.cfg.yaw_tolerance
-            and speed < MAX_SETTLED_SPEED
-            and abs(self.data.qvel[self.cargo_v + 5]) < MAX_SETTLED_YAW_SPEED
-            and not failed
+            and (speed < MAX_SETTLED_SPEED)
+            and (abs(self.data.qvel[self.cargo_v + 5]) < MAX_SETTLED_YAW_SPEED)
+            and (not failed)
         )
         self.success_time = self.success_time + self.cfg.dt if settled else 0
-        success = self.success_time + 1e-8 >= self.cfg.success_hold_seconds
+        success = self.success_time + 1e-08 >= self.cfg.success_hold_seconds
         terminated = bool(success or failed)
         truncated = bool(
-            self.steps * self.cfg.dt + 1e-8 >= self.cfg.episode_seconds
-            and not terminated
+            self.steps * self.cfg.dt + 1e-08 >= self.cfg.episode_seconds
+            and (not terminated)
         )
         info.update(
             success=bool(success),
@@ -319,45 +216,4 @@ class PushEnv:
             cargo_fall=cargo_fall,
             out_of_bounds=outside,
         )
-        return terminated, truncated
-
-    def _mean_approach_distance(self) -> float:
-        return np.linalg.norm(self.push_positions() - self.robot_xy, axis=1).mean()
-
-    def _reward_terms(
-        self, before: Info, info: Info, previous_approach: float, commands: np.ndarray
-    ) -> dict[str, float]:
-        """Shared reward components, evaluated before updating last_commands.
-
-        Distances are in meters; yaw errors in radians. Contact/time penalties
-        scale with dt, and body contact is penalized so legs do the pushing.
-        """
-        physics_steps = PHYSICS_STEPS * self.cfg.high_level_decimation
-        approach = self._mean_approach_distance()
-        if info["success"]:
-            terminal_reward = self.cfg.reward_weights.success
-        elif info["failed"]:
-            terminal_reward = self.cfg.reward_weights.failure
-        else:
-            terminal_reward = 0.0
-        terms = {
-            "progress": self.cfg.reward_weights.progress
-            * (before["distance"] - info["distance"]),
-            "orientation": self.cfg.reward_weights.orientation
-            * (before["yaw_error"] - info["yaw_error"]),
-            "approach": self.cfg.reward_weights.approach
-            * (previous_approach - approach),
-            "command_change": -self.cfg.reward_weights.command_change
-            * float(np.mean(((commands - self.last_commands) / COMMAND_LIMIT) ** 2)),
-            "time": -self.cfg.reward_weights.time * self.cfg.dt,
-            "collision": -self.cfg.reward_weights.robot_contact
-            * self.cfg.dt
-            * self.contacts.robot_collision_steps
-            / physics_steps,
-            "body_cargo_contact": -self.cfg.reward_weights.body_contact
-            * self.cfg.dt
-            * float(self.contacts.part_contact_counts[BODY].mean())
-            / physics_steps,
-            "terminal": terminal_reward,
-        }
-        return terms
+        return (terminated, truncated)

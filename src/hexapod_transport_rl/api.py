@@ -1,4 +1,4 @@
-"""Standard RL interfaces over the shared, physically interacting robot team."""
+"""Internal Gymnasium adapter and native MuJoCo renderer for the student task."""
 
 from copy import deepcopy
 from pathlib import Path
@@ -14,16 +14,12 @@ from .config import ENV_VERSION, PushConfig
 from .env import PushEnv
 from .types import Info, Observation, ResetResult, StepResult
 
-GYM_ENV_ID = "HexapodPush-v0"
-
 
 class HexapodPushEnv(gym.Env):
-    """One Gymnasium agent controls the complete robot team.
+    """Native renderer and episode bookkeeping, specialized by SinglePushGymEnv.
 
-    By default observations/actions are flat (N*D,)/(N*3,) for PPO/SAC.
-    ``flatten=False`` retains (N,D)/(N,3) for shared-policy MARL collectors.
-    Episodes never reset implicitly. ``state()`` remains the final state after
-    termination/truncation, so timeout bootstrapping is possible before reset.
+    Student code creates environments through CylinderPushTask.make_env().
+    Episodes retain the final transition until an explicit reset.
     """
 
     core_type = PushEnv
@@ -265,7 +261,3 @@ class HexapodPushEnv(gym.Env):
             self._renderer = None
         self._closed = True
         self._frames.clear()
-
-
-if GYM_ENV_ID not in gym.registry:
-    gym.register(id=GYM_ENV_ID, entry_point="hexapod_transport_rl.api:HexapodPushEnv")

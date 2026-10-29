@@ -19,7 +19,20 @@ from .warp_contacts import WarpContactTracker
 class WarpPhysics:
     """One compiled MuJoCo model and independent GPU states for every world."""
 
+    contact_capacity = 128
+    constraint_capacity = 256
+    epa_horizon_capacity = 64
+
     def __init__(self, reference, num_worlds, device):
+        # MuJoCo Warp 3.11 fixes this workspace at 24 edges. Cylinder/leg
+        # contacts can exceed it. Only enlarge allocation; retain equations,
+        # tolerances and iteration limits. The pinned version uses a dynamic
+        # array extent in EPA, so the existing kernel accepts the larger buffer.
+        from mujoco_warp._src import collision_convex
+
+        collision_convex.MJ_MAX_EPAHORIZON = max(
+            collision_convex.MJ_MAX_EPAHORIZON, self.epa_horizon_capacity
+        )
         if wp.config.log_level == wp.LOG_INFO:
             wp.config.log_level = wp.LOG_WARNING
         wp.init()
@@ -28,7 +41,11 @@ class WarpPhysics:
         self.warp_stream = wp.stream_from_torch(self.stream)
         self.num_worlds, self.num_robots = num_worlds, reference.cfg.num_robots
         self.control_steps = reference.cfg.high_level_decimation
-        self.controller = reference.controller.to(self.device).eval()
+        self.controller = (
+            reference.controller.to(self.device).eval()
+            if reference.controller is not None
+            else None
+        )
         self.compile_seconds = 0.0
         with wp.ScopedDevice(str(self.device)):
             self.model = mjw.put_model(reference.model)
@@ -36,8 +53,8 @@ class WarpPhysics:
                 reference.model,
                 reference.data,
                 nworld=num_worlds,
-                nconmax=128 * self.num_robots,
-                njmax=256 * self.num_robots,
+                nconmax=self.contact_capacity * self.num_robots,
+                njmax=self.constraint_capacity * self.num_robots,
             )
             self.contacts = WarpContactTracker(
                 self.model,
@@ -155,9 +172,13 @@ class WarpPhysics:
     def check(self):
         """Synchronize at rollout boundaries, rather than on every physics tick."""
         if bool((self.overflow_seen | self.overflow).any()):
-            raise RuntimeError(
-                "Warp contact/constraint capacity exceeded; check physics buffers"
-            )
+            from mujoco_warp._src.types import OverflowType
+
+            code = 0
+            for value in (self.overflow_seen | self.overflow).cpu().tolist():
+                code |= value
+            names = [kind.name for kind in OverflowType if code & int(kind)]
+            raise RuntimeError("Warp physics capacity exceeded: " + ", ".join(names))
         if bool(self.invalid_seen.any()) or not bool(
             torch.isfinite(self.qpos).all() & torch.isfinite(self.qvel).all()
         ):

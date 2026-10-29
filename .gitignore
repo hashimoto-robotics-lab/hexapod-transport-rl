@@ -5,3 +5,5 @@ __pycache__/
 runs/
 dist/
 .ipynb_checkpoints/
+MUJOCO_LOG.TXT
+.colab-constraints.txt

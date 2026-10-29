@@ -20,14 +20,6 @@ def build_model(asset_root: Path, cfg: PushConfig) -> mujoco.MjModel:
     return _compile_model(root, cfg.num_robots)
 
 
-def build_walking_model(asset_root: Path, num_robots: int) -> mujoco.MjModel:
-    """Build a flat-floor walking scene containing only the requested robots."""
-    root, world, robot_template = _prepare_scene(asset_root)
-    root.set("model", "hexapod_walking")
-    _add_robots_and_floor(root, world, robot_template, num_robots)
-    return _compile_model(root, num_robots)
-
-
 def _compile_model(root: ET.Element, num_robots: int) -> mujoco.MjModel:
     spec = mujoco.MjSpec.from_string(ET.tostring(root, encoding="unicode"))
     for i in range(num_robots):
@@ -63,9 +55,8 @@ def _prepare_scene(asset_root: Path) -> tuple[ET.Element, ET.Element, ET.Element
     collision.set("condim", "3")
     world = root.find("worldbody")
     original = copy.deepcopy(world.find("body"))
-    # The walking policy was trained with uniformly scaled CAD inertias (3 kg).
     inertials = list(original.iter("inertial"))
-    factor = 3.0 / sum(float(e.get("mass")) for e in inertials)
+    factor = 3.0 / sum((float(e.get("mass")) for e in inertials))
     for element in inertials:
         element.set("mass", str(float(element.get("mass")) * factor))
         for key in ("fullinertia", "diaginertia"):
@@ -73,8 +64,10 @@ def _prepare_scene(asset_root: Path) -> tuple[ET.Element, ET.Element, ET.Element
                 element.set(
                     key,
                     " ".join(
-                        str(v * factor)
-                        for v in np.fromstring(element.get(key), sep=" ")
+                        (
+                            str(v * factor)
+                            for v in np.fromstring(element.get(key), sep=" ")
+                        )
                     ),
                 )
     for joint in original.iter("joint"):
@@ -83,7 +76,7 @@ def _prepare_scene(asset_root: Path) -> tuple[ET.Element, ET.Element, ET.Element
         joint.set("frictionloss", ".05")
     world.clear()
     ET.SubElement(world, "light", pos="0 -2 5", dir="0 0 -1", diffuse=".8 .8 .8")
-    return root, world, original
+    return (root, world, original)
 
 
 def _add_robots_and_floor(
@@ -94,7 +87,7 @@ def _add_robots_and_floor(
     Collision bits: floor=1, robot i=1<<(i+1), cargo=1<<(N+1).
     The returned mask reserves one additional bit for optional cargo.
     """
-    all_bits = (1 << (num_robots + 2)) - 1
+    all_bits = (1 << num_robots + 2) - 1
     _add_floor_material(root)
     ET.SubElement(
         world,
@@ -110,7 +103,7 @@ def _add_robots_and_floor(
     sensors = ET.SubElement(root, "sensor")
     for i in range(num_robots):
         body = copy.deepcopy(robot_template)
-        bit = 1 << (i + 1)
+        bit = 1 << i + 1
         for element in body.iter():
             if "name" in element.attrib:
                 element.set("name", f"r{i}/" + element.get("name"))
@@ -118,7 +111,6 @@ def _add_robots_and_floor(
                 if "collision" in element.get("name", ""):
                     element.set("contype", str(bit))
                     element.set("conaffinity", str(all_bits ^ bit))
-        # Preserve source materials/colors as well as the hexapod body and legs.
         world.append(body)
         ET.SubElement(sensors, "gyro", name=f"r{i}/imu_ang_vel", site=f"r{i}/imu")
     return all_bits
@@ -141,7 +133,6 @@ def _add_floor_material(root: ET.Element) -> None:
         width="128",
         height="128",
     )
-    # texuniform makes texrepeat a count per meter, independent of plane extent.
     ET.SubElement(
         assets,
         "material",
@@ -156,11 +147,11 @@ def _add_floor_material(root: ET.Element) -> None:
 
 
 def _add_cargo(world: ET.Element, cfg: PushConfig, all_bits: int) -> ET.Element:
-    """Build a box or the two non-overlapping pieces of T-shaped cargo."""
+    """Build a box, a cylinder, or the two non-overlapping pieces of a T."""
     half_height = cfg.cargo_height / 2
     cargo = ET.SubElement(world, "body", name="cargo", pos=f"0 0 {half_height}")
     ET.SubElement(cargo, "freejoint", name="cargo_free")
-    cargo_bit = 1 << (cfg.num_robots + 1)
+    cargo_bit = 1 << cfg.num_robots + 1
     common = dict(
         type="box",
         contype=str(cargo_bit),
@@ -169,66 +160,19 @@ def _add_cargo(world: ET.Element, cfg: PushConfig, all_bits: int) -> ET.Element:
         priority="1",
         rgba=".9 .66 .15 1",
     )
-    if cfg.shape == "box":
-        ET.SubElement(
-            cargo,
-            "geom",
-            name="cargo_box",
-            size=f"{cfg.depth / 2} {cfg.width / 2} {half_height}",
-            mass=str(cfg.cargo_mass),
-            **common,
-        )
-    elif cfg.t_geometry != "legacy":
-        # Origin is the centerline junction; pieces do not overlap.
-        thickness = 0.2
-        arm = cfg.t_arm_length
-        stem_length = cfg.t_stem_length - thickness / 2
-        fraction = cfg.width / (cfg.width + stem_length)
-        ET.SubElement(
-            cargo,
-            "geom",
-            name="cargo_bar",
-            pos="0 0 0",
-            size=f"{thickness / 2} {arm} {half_height}",
-            mass=str(cfg.cargo_mass * fraction),
-            **common,
-        )
-        ET.SubElement(
-            cargo,
-            "geom",
-            name="cargo_stem",
-            pos=f"{thickness / 2 + stem_length / 2} 0 0",
-            size=f"{stem_length / 2} {thickness / 2} {half_height}",
-            mass=str(cfg.cargo_mass * (1 - fraction)),
-            **common,
-        )
-    else:
-        # Non-overlapping bar and stem; uniform density over the T footprint.
-        fraction = cfg.width * 0.2 / (cfg.width * 0.2 + 0.25 * 0.5)
-        ET.SubElement(
-            cargo,
-            "geom",
-            name="cargo_bar",
-            pos="-.25 0 0",
-            size=f".1 {cfg.width / 2} {half_height}",
-            mass=str(cfg.cargo_mass * fraction),
-            **common,
-        )
-        ET.SubElement(
-            cargo,
-            "geom",
-            name="cargo_stem",
-            pos=".1 0 0",
-            size=f".25 .125 {half_height}",
-            mass=str(cfg.cargo_mass * (1 - fraction)),
-            **common,
-        )
+    ET.SubElement(
+        cargo,
+        "geom",
+        name="cargo_cylinder",
+        size=f"{cfg.cargo_radius} {half_height}",
+        mass=str(cfg.cargo_mass),
+        **{**common, "type": "cylinder"},
+    )
     return cargo
 
 
 def _add_goal_marker(world: ET.Element, cargo: ET.Element) -> None:
     """Show the full desired footprint with collision-free translucent geoms."""
-    # A collision-free target matching the full object footprint.
     target = ET.SubElement(world, "body", name="goal")
     for geom in cargo.findall("geom"):
         marker = copy.deepcopy(geom)
