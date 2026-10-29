@@ -74,7 +74,7 @@ def draw_task(path):
     plt.close(fig)
 
 
-def draw_curves(curves, records, output):
+def draw_curves(curves, records, output, curriculum=None):
     fig, axes = plt.subplots(1, 2, figsize=(10, 3.8))
     for condition, group in curves.groupby("condition", sort=False):
         for seed, seed_rows in group.groupby("seed"):
@@ -120,6 +120,18 @@ def draw_curves(curves, records, output):
     )
     axes[1].set(ylabel="Validation final goal distance [m]")
     for ax in axes:
+        if curriculum:
+            total = records.trained_steps.max() / 1e6
+            boundaries = [p["until"] * total for p in curriculum["phases"][:-1]]
+            for boundary in boundaries:
+                ax.axvline(boundary, color="#888888", linestyle=":", lw=0.8)
+            ax.axvspan(
+                boundaries[-1] if boundaries else 0,
+                total,
+                color="#888888",
+                alpha=0.08,
+                label="Full-task training",
+            )
         ax.set_xlabel("Training samples [million]")
         ax.grid(alpha=0.2)
         ax.legend(fontsize=9)
@@ -308,7 +320,7 @@ def build(source, output):
     )
     shutil.copy2(source / "protocol.json", output / "protocol.json")
     draw_task(output / "task.png")
-    draw_curves(curve_frame, frame, output)
+    draw_curves(curve_frame, frame, output, protocol.get("curriculum"))
     return summary
 
 

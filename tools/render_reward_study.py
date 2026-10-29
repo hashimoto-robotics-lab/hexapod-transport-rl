@@ -14,13 +14,15 @@ def draw_frames(study, conditions):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    fig, axes = plt.subplots(len(conditions), 4, figsize=(12, 6))
+    fig, axes = plt.subplots(
+        len(conditions), 4, figsize=(12, 3 * len(conditions)), squeeze=False
+    )
     for row, condition in enumerate(conditions):
         with imageio.get_reader(study / "videos" / f"{condition}.mp4") as reader:
             fps = reader.get_meta_data()["fps"]
             last = reader.count_frames() - 1
-            for column, seconds in enumerate((0, 10, 20, 39.6)):
-                index = min(round(seconds * fps), last)
+            for column, fraction in enumerate((0, 1 / 3, 2 / 3, 1)):
+                index = round(fraction * last)
                 ax = axes[row, column]
                 ax.imshow(reader.get_data(index))
                 ax.set_title(f"{condition}, {index / fps:.1f} s", fontsize=10)

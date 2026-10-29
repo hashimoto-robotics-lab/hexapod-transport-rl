@@ -1,11 +1,11 @@
 {
   "checkpoint": "../checkpoints/baseline_s42.pt",
   "video": "baseline.mp4",
-  "seed": 550000,
+  "seed": 850000,
   "fps": 25,
   "success": true,
-  "distance_m": 0.031927283853292465,
-  "seconds": 16.400000000000002,
+  "distance_m": 0.04414593428373337,
+  "seconds": 6.4,
   "backend": "cpu",
   "training_seed": 42
 }

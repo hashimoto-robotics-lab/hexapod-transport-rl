@@ -1,7 +1,5 @@
-"""Task definition matching the stable transport policy used by the lesson."""
+"""Standard task: original inputs, stop + eight directions, common rotation."""
 
 from hexapod_transport_rl.student import CylinderPushTask
 
-TASK = (
-    CylinderPushTask.baseline()
-)  # Use the lesson settings and initial checkpoint for reward experiments.
+TASK = CylinderPushTask.baseline()

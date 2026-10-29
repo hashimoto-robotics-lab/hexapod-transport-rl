@@ -1,11 +1,11 @@
 {
   "checkpoint": "../checkpoints/progress40_s42.pt",
   "video": "progress40.mp4",
-  "seed": 550000,
+  "seed": 850000,
   "fps": 25,
   "success": true,
-  "distance_m": 0.04767236113548279,
-  "seconds": 15.4,
+  "distance_m": 0.01665373146533966,
+  "seconds": 7.2,
   "backend": "cpu",
   "training_seed": 42
 }

@@ -330,7 +330,7 @@ requires-dist = [
     { name = "gymnasium", specifier = ">=1.2,<2" },
     { name = "imageio", specifier = ">=2.34" },
     { name = "imageio-ffmpeg", specifier = ">=0.5" },
-    { name = "ipython", marker = "extra == 'notebook'", specifier = ">=8,<10" },
+    { name = "ipython", marker = "extra == 'notebook'", specifier = ">=7.34,<10" },
     { name = "matplotlib", marker = "extra == 'notebook'", specifier = ">=3.9,<4" },
     { name = "mujoco", specifier = "==3.11.0" },
     { name = "mujoco-warp", marker = "extra == 'warp'", specifier = "==3.11.0" },

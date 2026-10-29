@@ -12,9 +12,10 @@
 ## Colabから学ぶ
 
 [Step 0〜13のノートブック](../notebooks/student_api_colab.ipynb)を用意しています。
-最初のセルでGitHubから教材をcloneします。開き方と取得するブランチの指定は[README](../README.md#最初はcolabで学ぶ)を参照してください。
+最初のセルでGitHubから教材をcloneします。[README](../README.md#colabで実行する)からColabを開けます。
 Step 0〜7では、実際に学習した標準条件と報酬1項目の比較を読みます。
-Step 8〜10は仮説の記述から共通の運搬モデルでの追加学習・複数seed比較・図の作成、Step 11は独自の報酬関数を追加して学習する例です。
+Step 8〜9では標準条件をゼロから学習し、評価と動画を確認します。
+報酬変更・複数seed比較・独自報酬は、それぞれの実行スイッチを有効にして進みます。
 [実測結果](../results/reward_study/discussion.md)と[実験の手引き](experiment-guide.md)も同梱しています。
 Colabに入っているPyTorchを保持するので、準備のためにPyTorchを入れ替える必要はありません。
 
@@ -32,7 +33,7 @@ PYTHONPATH=src MUJOCO_GL=egl .venv/bin/python tools/train_student.py \
 学習・保存・再読込・評価が実行できるかを確認します。この結果を運搬の学習性能として使いません。
 出力先は毎回新しい名前にします。既存の重みを上書きしません。
 
-安定した報酬実験の設定と初期モデルは[学習方法の説明](training-method.md)を参照してください。
+ゼロから学習する報酬実験の設定は[学習方法の説明](training-method.md)を参照してください。
 以下のAPIの既定動作は新規学習です。
 
 本学習は[READMEのGPU環境](../README.md#ローカルで実行する)で行います。
@@ -47,7 +48,8 @@ GPUの指定が必要なら`CUDA_VISIBLE_DEVICES=1`などを環境変数に追�
 
 ## Pythonから使う
 
-以下は観測・行動も変更する新規学習の例です。完成例と同じ追加学習は[READMEの例](../README.md#安定した運搬を出発点にする)を使います。
+以下は観測・行動も変更するAPIの例です。この入力・行動での学習性能は別途検証が必要です。
+標準条件を学習する場合は、後述のカリキュラムと完成例の学習設定を使います。
 
 ```python
 from hexapod_transport_rl.student import (
@@ -73,11 +75,11 @@ run.video("runs/my_experiment/episode.mp4")
 ActorとCriticはともに、選んだ観測だけを使います。PPOやTensorDictを直接編集する必要はありません。
 `checkpoint_selection="best"`（既定）では、`run.checkpoint`は検証で選んだ`best.pt`です。
 `checkpoint_selection="latest"`では、最後の更新の`latest.pt`です。`run.evaluate()`、`run.video()`、`compare()`もこの指定に従います。
-完成例の追加学習は`latest`を使い、更新前の初期方策へ差し替えません。
-最良の検証結果が初期方策だった場合は、`best.pt`に初期方策が残ります。
+完成例は`best`を使い、最後のランダム条件の段階の検証で選びます。
+カリキュラムなしの学習では、初期方策が最良なら`best.pt`に残ります。カリキュラムを使う場合、最後の段階の検証から選びます。
 
 `steps`は全並列世界の上位行動数の合計です。`num_envs * horizon`の正の整数倍にします。
-512並列・horizon 64なら、655,360ステップは20ロールアウトです。
+512並列・horizon 64なら、9,830,400ステップは300ロールアウトです。
 `max_seconds`の既定値は`None`です。卒論の比較では同じステップ数を使い、時間上限による打切りは別に記録します。
 PPOの設定を変える場合は、既存の`PPOSettings`を`settings=`に渡せます。
 
@@ -85,21 +87,22 @@ PPOの設定を変える場合は、既存の`PPOSettings`を`settings=`に渡�
 
 | ファイル | 変更するもの |
 |---|---|
-| [baseline.py](../examples/student/baseline.py) | 安定した運搬モデルと同じ14入力・停止＋8方向・標準報酬・回転対称化 |
+| [baseline.py](../examples/student/baseline.py) | 標準の14入力・停止＋8方向・報酬・回転対称化 |
 | [reward_study.py](../examples/student/reward_study.py) | 完成例の2条件・3 seed・学習量・評価条件 |
 | [reward_only.py](../examples/student/reward_only.py) | 目標付近で円柱の速度を抑える独自報酬を追加 |
 | [observations.py](../examples/student/observations.py) | 位置・向きの6入力へ変更。位置の正規化は基準と共通 |
 | [actions.py](../examples/student/actions.py) | 停止＋4方向へ変更。16方向・連続行動の例も記載 |
 | [custom_observation.py](../examples/student/custom_observation.py) | 自作のスカラー観測を追加 |
-| [pretrained.py](../examples/student/pretrained.py) | 既存の選択済みモデルと同じ回転対称化を有効にする |
-| [compare.py](../examples/student/compare.py) | 観測・行動を変える新規学習の接続例。追加学習の高成功率は引き継がない |
+| [compare.py](../examples/student/compare.py) | 観測・行動を変える新規学習の接続例。新しい条件の学習性能は別途確認 |
 
 例えば報酬のサンプルは、次のように実行します。
 
 ```bash
 PYTHONPATH=src MUJOCO_GL=egl python tools/train_student.py \
   examples/student/reward_only.py --output runs/student_reward_s42 \
-  --backend warp --seed 42 --steps 655360
+  --backend warp --seed 42 --steps 9830400 --num-envs 512 --horizon 64 \
+  --validation-envs 256 --validate-every 10 --curriculum \
+  --checkpoint-selection best --episodes 1024 --evaluation-seed 940000
 ```
 
 ## 観測を選ぶ・作る
@@ -228,33 +231,44 @@ CPU用とGPU用に別の関数を書く必要はありません。
 課題ファイルは`TASK = CylinderPushTask(...)`を定義します。補助関数も同じファイルに置くか、導入済みのパッケージを使います。
 実行処理を同じファイルに置く場合は`if __name__ == "__main__":`で囲みます。
 
-## 既存モデルを引き継ぐ
+## カリキュラムでゼロから学習する
 
-Colabの報酬実験では、この方法と学習率`3e-5`・エントロピー係数`0.001`を共通に使います。
-ActorとCriticの初期重みは全seedで共通、Adamは毎回新規です。新規学習の3 seedとは区別して解釈します。
-`episode_seconds`も変更できるため、短い操作練習でも同じモデルから開始できます。
+```python
+from hexapod_transport_rl import CylinderPushTask, PushCurriculum, train
 
-新規学習が既定です。既存の99.5%モデルと同じ構成には`CylinderPushTask.baseline()`を使います。
-ここでは`rotation="goal_octant"`が有効で、世界座標の回転対称性を利用します。
-
-```bash
-PYTHONPATH=src MUJOCO_GL=egl python tools/train_student.py \
-  examples/student/pretrained.py --output runs/student_finetune_s42 \
-  --backend warp --steps 655360 \
-  --initial-checkpoint checkpoints/cylinder_push.pt \
-  --learning-rate 3e-5 --entropy-coeff 0.001 --checkpoint-selection latest
+run = train(
+    CylinderPushTask.baseline(), "runs/fresh_s42", seed=42,
+    steps=9_830_400, num_envs=512, horizon=64,
+    validation_envs=256, validate_every=10,
+    initial_checkpoint=None,
+    curriculum=PushCurriculum(),
+    checkpoint_selection="best",
+)
+report = run.evaluate(episodes=1024, seed=940000)
+run.video("runs/fresh_s42/episode.mp4", seed=950000)
 ```
 
-Actor・Criticの重みを引き継ぎ、Adamは新規に作ります。中断した学習の完全な再開とは異なります。
-`load_task(checkpoint)`で元の設定を取り出し、`replace(task, rewards=...)`で報酬だけ変えることもできます。
+`initial_checkpoint=None`が新規学習です。押す方策は保存済みの重みを読み込みません。
+固定歩行モデルは使います。1回の`train`の中で、開始配置の範囲と学習率を予定に従って変えます。
+重みとAdamは保持し、最後は元の課題の全開始分布で学習します。
+学習途中の検証も、最初から全方向ランダムの元の課題で行います。
+`curriculum=None`なら、最初から元の開始分布で学習します。
 
-観測の順序・正規化・関数・マスク、行動の数・座標系・速度が違う場合は、同じ次元でも重みの継承を拒否します。
-その場合は`initial_checkpoint`を省略し、新しい入力・出力層で学習します。
-旧形式のチェックポイントも読み込めます。独自関数を含む新形式は保存時のソースから復元します。
+`PushCurriculum().phases`で各段階を確認できます。`PushPhase`の`resets`は開始配置の設定、
+`until`は総ロールアウト数に対する終了割合、`learning_rate_scale`は基本学習率への倍率です。
+変更する研究では全条件で同じ予定を使います。物理・報酬・成功精度を変える予定は使えません。
 
-`goal_octant`は既存の`baseline`14入力と停止＋8方向の世界座標行動に対応します。
-観測・行動の実験では`rotation="none"`を使います。`compare.py`の観測・行動の新規学習例は、標準側も`none`に揃えています。
-回転対称化の有無も実験条件なので、観測の効果を比較するときは両条件で揃えます。
+`goal_octant`はbaselineの14入力と停止＋世界座標8方向に対応します。
+観測・行動の実験では、標準側も`rotation="none"`に揃えます。
+
+## 自分のモデルから追加学習する場合
+
+追加学習を研究する場合は、`initial_checkpoint="runs/previous/latest.pt"`を明示できます。
+Actor・Criticを引き継ぎ、Adamは新規に作ります。中断した学習の完全な再開とは異なります。
+このColabの標準実験には使いません。
+`load_task(checkpoint)`で元の設定を取り出し、`replace(task, rewards=...)`で報酬だけ変更できます。
+観測の順序・正規化・関数・マスク、行動の数・座標系・速度が異なる場合は、同じ次元でも重みの継承を拒否します。
+独自関数を含むモデルは保存したソースから復元します。
 
 ## 複数seedと卒論用の比較
 
@@ -263,7 +277,10 @@ Actor・Criticの重みを引き継ぎ、Adamは新規に作ります。中断�
 ```bash
 PYTHONPATH=src MUJOCO_GL=egl python tools/train_student.py \
   examples/student/reward_only.py --output runs/student_reward_seeds \
-  --backend warp --steps 655360 --seeds 42 43 44 --episodes 256
+  --backend warp --steps 9830400 --num-envs 512 --horizon 64 \
+  --validation-envs 256 --validate-every 10 --curriculum \
+  --checkpoint-selection best --seeds 42 43 44 \
+  --episodes 1024 --evaluation-seed 940000
 ```
 
 複数条件の例は次のコマンドです。
@@ -274,7 +291,20 @@ PYTHONPATH=src MUJOCO_GL=egl python examples/student/compare.py \
 ```
 
 まず`--smoke`を付ければ、3条件×2seedの短い接続試験になります。
-Pythonからは`compare({"baseline": task_a, "changed": task_b}, output, seeds=(42,43,44), steps=655360)`を使えます。
+Pythonからは、報酬の2条件を次のように比較できます。`task_a`と`task_b`は報酬1項目だけを変えた課題です。
+
+```python
+from hexapod_transport_rl import compare, PushCurriculum
+
+comparison = compare(
+    {"baseline": task_a, "changed": task_b}, "runs/reward_comparison",
+    seeds=(42, 43, 44), steps=9_830_400, num_envs=512, horizon=64,
+    curriculum=PushCurriculum(), validation_envs=256, validate_every=10,
+    checkpoint_selection="best", evaluation_episodes=1024,
+    evaluation_seed=940000,
+)
+```
+
 物理、開始分布、制限時間、成功条件が違う組み合わせは比較APIが拒否します。
 報酬・観測・行動と回転対称化は、それぞれの実験で明示的に選びます。
 

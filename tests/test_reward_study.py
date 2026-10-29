@@ -7,6 +7,7 @@ import statistics
 from pathlib import Path
 
 import pytest
+import torch
 
 STUDY = Path(__file__).resolve().parents[1] / "results/reward_study"
 
@@ -27,8 +28,12 @@ def test_completed_study_metrics_and_paired_initialization():
         assert len(pair) == 2
         for key in ("initial_actor_sha256", "initial_critic_sha256"):
             assert len({row[key] for row in pair}) == 1
-    assert len({row["initial_actor_sha256"] for row in rows}) == 1
-    assert len({row["initial_critic_sha256"] for row in rows}) == 1
+    assert len({row["initial_actor_sha256"] for row in rows}) == len(
+        protocol["training_seeds"]
+    )
+    assert len({row["initial_critic_sha256"] for row in rows}) == len(
+        protocol["training_seeds"]
+    )
     for row in rows:
         assert row["final_actor_sha256"] != row["initial_actor_sha256"]
         assert row["final_critic_sha256"] != row["initial_critic_sha256"]
@@ -52,12 +57,37 @@ def test_completed_study_metrics_and_paired_initialization():
             distance = statistics.mean(e["distance_m"] for e in report["episodes"])
             assert float(row["mean_distance_m"]) == pytest.approx(distance)
             assert int(row["trained_steps"]) == protocol["training"]["steps"]
-            assert int(row["selected_steps"]) == int(row["trained_steps"])
+            assert int(row["selected_steps"]) <= int(row["trained_steps"])
+            full_started = int(
+                protocol["curriculum"]["phases"][-2]["until"]
+                * int(row["trained_steps"])
+            )
+            assert int(row["selected_steps"]) > full_started
+            assert (
+                int(row["full_task_steps"]) == int(row["trained_steps"]) - full_started
+            )
+            assert (
+                int(row["selected_full_task_steps"])
+                == int(row["selected_steps"]) - full_started
+            )
+            assert int(row["initial_optimizer_entries"]) == 0
+            expected_updates = (
+                int(row["selected_steps"])
+                // protocol["ppo"]["minibatch_size"]
+                * protocol["ppo"]["epochs"]
+            )
+            assert int(row["optimizer_steps"]) == expected_updates
             checkpoint = STUDY / row["checkpoint"]
             assert (
                 hashlib.sha256(checkpoint.read_bytes()).hexdigest()
                 == row["selected_checkpoint_sha256"]
             )
+            saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
+            assert saved["training"]["initial_checkpoint"] is None
+            assert saved["training"]["training_stage"] == "full_task"
+            assert {int(s["step"]) for s in saved["optimizer"]["state"].values()} == {
+                expected_updates
+            }
             rates.append(rate)
             distances.append(distance)
         actual = summary["conditions"][condition]
@@ -96,11 +126,11 @@ def test_completed_study_changes_one_reward_and_uses_common_layouts():
             for key in ("num_envs", "horizon", "validation_envs"):
                 assert run[key] == protocol["training"][key]
             assert run["backend"] == protocol["evaluation"]["backend"]
-            assert (
-                run["initial_checkpoint"]["sha256"]
-                == protocol["initial_checkpoint_sha256"]
-            )
-            assert run["checkpoint_selection"] == "latest"
+            assert run["initial_checkpoint"] is None
+            assert run["initialization"].startswith("random actor and critic")
+            assert run["curriculum"] == protocol["curriculum"]
+            assert run["training_stage"] == "full_task"
+            assert run["checkpoint_selection"] == "best"
             assert run["stopped_by"] == "step_budget"
             episodes = read_json(STUDY / "evaluations" / f"{condition}_s{seed}.json")[
                 "episodes"
@@ -125,6 +155,7 @@ def test_completed_study_changes_one_reward_and_uses_common_layouts():
 
 
 def test_final_updated_policies_and_all_seeds_are_reported():
+    protocol = read_json(STUDY / "protocol.json")
     with (STUDY / "learning_curve.csv").open() as stream:
         curves = list(csv.DictReader(stream))
     with (STUDY / "runs.csv").open() as stream:
@@ -136,12 +167,17 @@ def test_final_updated_policies_and_all_seeds_are_reported():
             for row in curves
             if (row["condition"], row["seed"]) == (run["condition"], run["seed"])
         ]
-        assert len(group) == 5
+        rollouts = protocol["training"]["steps"] // (
+            protocol["training"]["num_envs"] * protocol["training"]["horizon"]
+        )
+        assert len(group) == 1 + rollouts // protocol["training"]["validate_every"]
         assert int(group[0]["steps"]) == 0
+        assert float(group[0]["validation_success_rate"]) < 0.1
         assert int(group[-1]["steps"]) == int(run["trained_steps"])
         selected = [row for row in group if row["selected"] == "True"]
         assert len(selected) == 1
         assert int(selected[0]["steps"]) == int(run["selected_steps"])
+        assert selected[0]["curriculum_stage"] == "full_task"
     summary = read_json(STUDY / "summary.json")
     differences = []
     for seed in (42, 43, 44):
