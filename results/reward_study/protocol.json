@@ -1,7 +1,7 @@
 {
-  "study": "reward_progress_20_vs_40",
-  "source_commit": "ab70e5494bacfd794923ce09ef1b454628f32b6c",
-  "hypothesis": "Doubling only goal_progress from 20 to 40 will improve success rate and reduce final goal distance at a fixed training budget. A possible tradeoff is overshooting near the goal.",
+  "study": "stable_transfer_reward_progress_20_vs_40",
+  "source_commit": "663cff332b308c35ad5e3620d4ddacf876677913",
+  "hypothesis": "After the same stable transport policy initialization, doubling only goal_progress from 20 to 40 will improve success rate or final distance after an equal PPO fine-tuning budget.",
   "conditions": {
     "baseline": {
       "goal_progress": 20.0
@@ -10,54 +10,73 @@
       "goal_progress": 40.0
     }
   },
-  "rotation": "none",
+  "rotation": "goal_octant",
+  "initialization": "Common pretrained transport actor and critic; fresh Adam for every condition and training seed. These are fine-tuning seeds, not independent from-scratch trainings.",
+  "initial_checkpoint_sha256": "0ec7799279eaae789369755897478a8a621f1ed2f75347ca81d530e303f10877",
   "training_seeds": [
     42,
     43,
     44
   ],
   "training": {
-    "steps": 2621440,
-    "num_envs": 256,
+    "steps": 655360,
+    "num_envs": 512,
     "horizon": 64,
     "validation_envs": 256,
-    "validate_every": 10,
-    "initial_checkpoint": null,
-    "max_seconds": null
+    "validate_every": 5,
+    "initial_checkpoint": "checkpoints/cylinder_push.pt",
+    "checkpoint_selection": "latest"
+  },
+  "ppo": {
+    "epochs": 4,
+    "minibatch_size": 2048,
+    "learning_rate": 3e-05,
+    "gamma": 0.995,
+    "gae_lambda": 0.95,
+    "clip_epsilon": 0.2,
+    "entropy_coeff": 0.001,
+    "critic_coeff": 0.5,
+    "max_grad_norm": 0.5
   },
   "evaluation": {
-    "episodes": 256,
-    "seed": 240000,
+    "episodes": 1024,
+    "seed": 540000,
     "backend": "warp"
   },
-  "checkpoint_selection": "best.pt selected only on seed 131000 validation; initial candidate allowed; never select using final evaluation",
+  "report_checkpoint": "latest.pt",
+  "checkpoint_selection": "Final updated policy at the fixed sample budget; no initial or best-checkpoint fallback and no selection on final evaluation.",
+  "validation_seed": 131000,
   "primary_metric": "success_rate",
   "secondary_metrics": [
     "mean_distance_m",
     "mean_episode_seconds"
   ],
-  "report_uncertainty": "mean and sample standard deviation across the three training seeds; report all paired differences",
+  "report_uncertainty": "Mean and sample SD over three fine-tuning seeds; common evaluation layouts and pretrained weights; report all paired differences.",
+  "acceptance": {
+    "baseline_mean_success_rate_at_least": 0.98,
+    "every_baseline_seed_success_rate_at_least": 0.95,
+    "every_baseline_goal_sector_success_rate_at_least": 0.9
+  },
   "video": {
     "training_seed": 42,
-    "episode_seed": 250000,
+    "episode_seed": 550000,
     "backend": "native CPU MuJoCo"
   },
-  "pilot": {
-    "training_seed": 7,
-    "steps": 655360,
-    "purpose": "Measure throughput and learning at the previous lesson budget; excluded from final comparison; no final held-out evaluation"
+  "development": {
+    "training_seed": 17,
+    "evaluation_seed": 531000,
+    "excluded_from_main_comparison": true,
+    "scratch_goal_octant": {
+      "steps": 1310720,
+      "best_successes": 123,
+      "episodes": 512
+    },
+    "transfer": {
+      "steps": 655360,
+      "latest_successes": 1020,
+      "episodes": 1024,
+      "min_goal_sector_success_rate": 0.9827586206896551
+    }
   },
-  "budget_decision": "Use four times the previous lesson budget, fixed before any final comparison evaluation. Physics, reset distribution, network, PPO defaults and action/observation definitions are unchanged.",
-  "ppo": {
-    "epochs": 4,
-    "minibatch_size": 2048,
-    "learning_rate": 0.0003,
-    "gamma": 0.995,
-    "gae_lambda": 0.95,
-    "clip_epsilon": 0.2,
-    "entropy_coeff": 0.01,
-    "critic_coeff": 0.5,
-    "max_grad_norm": 0.5
-  },
-  "hardware_note": "Both GPUs are RTX A6000. GPU 1 also runs an unrelated workload. Wall times describe this shared workstation and are not controlled speed comparisons or Colab T4 benchmarks."
+  "hardware_note": "Both GPUs are RTX A6000. GPU 1 has an unrelated workload. Reported times cover additional training and validation, exclude pretraining, and are not Colab T4 benchmarks."
 }

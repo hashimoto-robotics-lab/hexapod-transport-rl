@@ -2,38 +2,68 @@
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/student_api_colab.ipynb)
 
-六足ロボット1台が、円柱を目標位置まで押す動作をTorchRL PPOで学習します。
-学生は **報酬・観測・行動** を変更し、共通の物理・成功条件で比較実験できます。
-18関節の機体・学習済み歩行モデル・モーターモデルを同梱しています。
+六足ロボット1台が円柱を目標まで押す課題を、TorchRL PPOで学びます。
+18関節の機体、固定した歩行モデル、モーターモデルを同梱しています。
+教材では、安定した運搬モデルを出発点に、報酬1項目を変更した**追加学習**を比較します。
 
-## 最初はColabで学ぶ
+## Colabで学ぶ
 
-[ステップごとのデモ](notebooks/student_api_colab.ipynb)をColabで開き、上から実行してください。
-標準条件と、報酬1項目だけを変更した実測の完成例を読み、仮説・学習曲線・評価・動画・考察を順に確認します。
-その後、自分の仮説で新規学習し、複数seedの比較・グラフ・結果保存まで進めます。
+1. [Colab教材を開く](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/student_api_colab.ipynb)。
+2. ランタイムを **T4 GPU** に変更する。
+3. 上から実行して完成例を読み、自分の仮説で比較実験を行う。
 
-1. [Colabでデモを開く](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/student_api_colab.ipynb)をクリックします。
-2. ランタイムを **T4 GPU** に変更します。
-3. 最初のセルを実行すると、GitHubから教材をcloneし、実行環境を準備します。
+Step 0〜7は、仮説・固定条件・学習曲線・最終評価・動画・考察の完成例です。読むための再学習は不要です。
+Step 8〜10で、自分の仮説から報酬を変更し、学習・複数seed比較・グラフ作成を行います。
+Step 11は独自報酬関数、Step 12は観測・行動を扱う発展課題、Step 13で考察と実験結果を保存します。
 
-Colabに入っているPyTorchをそのまま使います。
+`PROFILE="demo"`は2秒・32サンプルの操作練習です。この成績で運搬性能を判断しません。
+`"research"`は40秒の課題、各条件655,360サンプルの追加学習、3つの追加学習seed、1,024配置の最終評価です。
+完成例の[結果と考察](results/reward_study/discussion.md)、[学習方法の見直し](docs/training-method.md)、[実験の進め方](docs/experiment-guide.md)も参照できます。
 
-取得先は `https://github.com/hashimoto-robotics-lab/hexapod-transport-rl.git`、既定のブランチは `main` です。
-別の公開済みブランチを使う場合は、最初のセルの `REVISION` を変更してください。
-再実行時は取得済みの教材を使い、学生の編集を保持します。最新版を取り直す場合は新しいセッションを使います。
+最初のセルはGitHubの`main`をcloneし、Colabの既存PyTorchを保持して依存を準備します。
+再実行時は取得済みの教材を使って学生の編集を保持します。更新版はリンクから開き直し、新しいランタイムで実行してください。
 
-完成例は、各条件をランダムな重みから2,621,440サンプルずつ、3つの学習seedで実際に学習したものです。
-`goal_progress`の重みを20から40へ変更し、各方策を共通の未使用256配置で評価しています。
-結果を読むために再学習する必要はありません。[実測結果と考察](results/reward_study/discussion.md)も参照できます。
-今回の平均成功率は標準5.47%、変更5.34%でした。標準条件も学習が不安定なため、その限界と次の実験計画まで教材に記載しています。
 
-自分で動かす部分の初期設定 `PROFILE="demo"` は2秒・32サンプルの短い操作練習です。
-`"research"` にすると完成例と同じ40秒・2,621,440サンプル・3つの学習seedに切り替わります。
-学習時間・成功率は環境と学習予算に依存します。短いデモの成績を学習性能として使わないでください。
+実測の平均成功率は標準99.41%、報酬変更後99.41%でした。標準条件の各seedは99.22〜99.51%です。
+今回の1項目変更による一貫した改善は確認できませんでしたが、両条件とも高成功率を維持しました。
+
+## 安定した運搬を出発点にする
+
+以前の教材は、全方向の初期状態をランダムな重みから学習し、成功率が約5%に留まりました。
+現在の報酬実験は、段階的な学習で得た共通の運搬モデルから開始し、学習率と探索を抑えて追加学習します。
+
+- 両条件・全seedでActorとCriticの初期重みが同じ。Adamは毎回新規。
+- 共通の回転対称化で目標方向を45度刻みで揃え、行動を世界座標へ戻す。
+- 学習率`3e-5`、エントロピー係数`0.001`。
+- 比較には規定量を学習した**最後の方策**を使用。初期方策や途中の最良方策へ差し替えない。
+- ロボット位置・向き・目標位置の分布、物理、成功条件は従来と共通。
+
+これは共通モデルからの追加学習の比較です。独立したランダム初期重みからの学習3回とは区別します。
+過去の事前学習コストも、今回の追加学習時間には含めません。
+
+```python
+from hexapod_transport_rl import CylinderPushTask, PPOSettings, train
+
+task = CylinderPushTask.baseline()
+run = train(
+    task, "runs/my_reward_experiment", seed=42,
+    steps=655_360, num_envs=512, horizon=64,
+    validation_envs=256, validate_every=5,
+    initial_checkpoint="checkpoints/cylinder_push.pt",
+    checkpoint_selection="latest",
+    settings=PPOSettings(learning_rate=3e-5, entropy_coeff=0.001),
+)
+report = run.evaluate(episodes=1024, seed=640000)
+run.video()
+```
+
+`CylinderPushTask()`と`train()`の既定は新規学習です。上の設定を明示した場合に追加学習になります。
+入力・行動を変える研究では、そのモデルへ重みをそのまま継承できません。両条件の前処理を揃え、新規学習の方法も別途検証します。
+[APIリファレンス](docs/student-api.md)と[小さな課題ファイル](examples/student/README.md)に説明があります。
 
 ## ローカルで実行する
 
-Python 3.12/3.13を使います。CPUの接続確認は次のコマンドです。
+Python 3.12/3.13を使います。CPUの接続確認：
 
 ```bash
 uv sync --locked
@@ -41,92 +71,42 @@ MUJOCO_GL=egl .venv/bin/python tools/train_student.py \
   examples/student/baseline.py --output runs/smoke --smoke
 ```
 
-ローカルGPUでは、検証済みの次の構成を使えます。
-CUDA対応PythonへPyTorch 2.11.0のCUDA 12.8版を導入してから、追加依存を入れます。
-`uv`の既定設定はCPU版PyTorchを使うため、GPU環境には下記の`pip`を使ってください。
+GPUでは、検証に使った次の環境を用意できます。`uv`の既定はCPU版PyTorchなので、GPU環境へは`pip`で導入します。
 
 ```bash
 python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
 python -m pip install -e '.[warp,notebook]'
-MUJOCO_GL=egl python tools/train_student.py \
-  examples/student/baseline.py --output runs/baseline_s42 \
-  --backend warp --num-envs 256 --steps 2621440 \
-  --validation-envs 256 --validate-every 10
+MUJOCO_GL=egl python tools/run_reward_study.py \
+  --condition baseline --seeds 42 --output runs/stable_study/main
 ```
 
-## 学生が編集するAPI
+[完成例の再実行方法](results/reward_study/README.md)には、両条件・全seedの学習、集計、動画の作成方法があります。
+所要時間はGPUと負荷に依存します。RTX A6000の実測時間をColab T4の所要時間として扱いません。
 
-```python
-from hexapod_transport_rl import CylinderPushTask, DiscreteDirections, train
-
-task = CylinderPushTask(
-    observations=("robot_to_cargo", "cargo_to_goal", "robot_heading"),
-    actions=DiscreteDirections(count=4),  # 停止＋4方向
-    rewards={"goal_progress": 20, "time": -0.02, "success": 10, "failure": -10},
-)
-run = train(task, "runs/my_experiment", steps=655_360)
-report = run.evaluate(episodes=128)
-run.video()
-```
-
-[APIの説明・項目一覧](docs/student-api.md)と[Pythonサンプル](examples/student/README.md)を参照してください。
-独自関数は `.py` ファイルに置き、`load_task_file()`で読み込みます。
-保存時にソース・設定・依存バージョンも記録されます。
-
-## 報酬を変えて学習する例
-
-ColabのStep 0〜7は、完成した比較実験を読む教材です。
-Step 8〜10では、自分の仮説を書き、重み1つを変えて新規学習・共通配置での評価・複数seedの比較・図の保存を行います。
-Step 11では、目標の近くで円柱が速く動くと減点する独自関数を書き、報酬だけを変更して学習します。
-各学習の保存先に時刻を付けるので、値を変えてセルを再実行できます。
-[実験の進め方と考察の書式](docs/experiment-guide.md)に、結果が予想と異なったときの確認事項もまとめています。
-
-同じ課題をPythonファイルから学習する例もあります。
-
-```bash
-# 報酬の重みを変える
-.venv/bin/python tools/train_student.py examples/student/reward_weights.py \
-  --output runs/reward_weights_demo --smoke
-
-# 独自の報酬関数を追加する
-.venv/bin/python tools/train_student.py examples/student/reward_only.py \
-  --output runs/custom_reward_demo --smoke
-```
-
-本学習では`--smoke`を外し、CUDA対応Pythonで実行します。
-
-## 課題と参照モデル
+## 課題
 
 - 円柱：半径0.25 m、高さ0.25 m、質量2 kg。
-- 初期位置：円柱から0.65〜1.00 mの円環。位置・機体の向き・目標方向がランダム。
-- 目標：円柱から0.30〜0.60 m。位置誤差5 cm未満・速度0.06 m/s未満を0.4秒保持すると成功。
-- 物理200 Hz、固定歩行25 Hz、上位行動5 Hz。標準行動は停止＋世界座標8方向。
-
-`checkpoints/cylinder_push.pt`は以前の実験で選んだ学習済み方策です。
-`load_task()`で当時の設定を復元できます。このモデルは45度刻みの回転対称化を使います。
-新規の学生実験は対称化なしが既定なので、比較時は前処理を揃えてください。
-旧円柱チェックポイントと学生APIのチェックポイントを読み込めます。
+- ロボット開始位置：円柱から0.65〜1.00 mの円環、向きは全周でランダム。
+- 目標：円柱から0.30〜0.60 m、全方向でランダム。
+- 成功：位置誤差5 cm未満、円柱速度0.06 m/s未満を0.4秒保持。制限時間40秒。
+- 物理200 Hz、歩行25 Hz、上位行動5 Hz。行動は停止＋世界座標8方向。
 
 ## 構成
 
 ```text
-notebooks/student_api_colab.ipynb  # 最初に開く教材（1冊）
-examples/student/                 # 学生が変更する小さな課題ファイル
-src/hexapod_transport_rl/         # 学生API、PPO、CPU/GPU物理、機体・歩行資産
-checkpoints/                     # 参照方策1つと来歴・ハッシュ
-results/reward_study/             # 完成例の実測値・図・動画・評価用方策
-docs/                            # APIリファレンス、実験と考察の手引き
-tools/                           # 学習CLI、Colab準備、完成例の再実行・集計
-tests/                          # 物理・PPO・学生API・教材の検証
-pyproject.toml / uv.lock          # 依存関係
+notebooks/student_api_colab.ipynb  # 学生が最初に開く教材
+examples/student/                 # 編集する小さな課題と完成例の設定
+src/hexapod_transport_rl/         # API、PPO、物理、機体・歩行資産
+checkpoints/                     # 共通の事前学習済み運搬モデルと来歴
+results/reward_study/             # 実測値、図、動画、更新後の方策
+docs/                            # API、学習方法、実験と考察の手引き
+tools/                           # Colab準備、学習・集計・動画作成
+tests/                           # API、物理、PPO、教材、結果の検証
 ```
 
-`runs/`は実行時に作られる出力でGit管理しません。
-旧タスク、旧ノートブック、過去のレポート・実験用スクリプトは整理済みです。
-
-開発用チェック：
+`runs/`は実行時の出力でGit管理しません。
 
 ```bash
-uv run ruff check src tests tools
+uv run ruff check src tests tools examples/student
 MUJOCO_GL=egl uv run --extra notebook pytest
 ```

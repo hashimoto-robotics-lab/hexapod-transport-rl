@@ -47,9 +47,9 @@
     "goal_radius_min": 0.3,
     "goal_radius_max": 0.6,
     "goal_azimuth_degrees": null,
-    "policy_rotation_mode": "none"
+    "policy_rotation_mode": "goal_octant"
   },
-  "rotation": "none",
+  "rotation": "goal_octant",
   "observations": [
     {
       "func": {

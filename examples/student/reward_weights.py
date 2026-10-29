@@ -4,5 +4,5 @@ from dataclasses import replace
 
 from hexapod_transport_rl import CylinderPushTask
 
-baseline = CylinderPushTask()
+baseline = CylinderPushTask.baseline()
 TASK = replace(baseline, rewards={**baseline.rewards, "goal_progress": 40.0})

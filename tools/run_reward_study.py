@@ -61,6 +61,8 @@ def main():
             torch=str(torch.__version__),
             initial_actor_sha256=model_hash(run.directory / "initial.pt"),
             initial_critic_sha256=model_hash(run.directory / "initial.pt", "critic"),
+            final_actor_sha256=model_hash(run.checkpoint),
+            final_critic_sha256=model_hash(run.checkpoint, "critic"),
             selected_checkpoint_sha256=hashlib.sha256(
                 run.checkpoint.read_bytes()
             ).hexdigest(),

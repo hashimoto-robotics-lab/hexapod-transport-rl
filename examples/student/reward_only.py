@@ -10,7 +10,7 @@ def near_goal_speed(before: PushState, after: PushState):
     return after.cargo_speed.square() * (after.goal_distance < 0.10)
 
 
-baseline = CylinderPushTask()
+baseline = CylinderPushTask.baseline()
 TASK = replace(
     baseline,
     rewards={

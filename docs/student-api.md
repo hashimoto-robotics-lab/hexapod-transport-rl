@@ -14,7 +14,7 @@
 [Step 0〜13のノートブック](../notebooks/student_api_colab.ipynb)を用意しています。
 最初のセルでGitHubから教材をcloneします。開き方と取得するブランチの指定は[README](../README.md#最初はcolabで学ぶ)を参照してください。
 Step 0〜7では、実際に学習した標準条件と報酬1項目の比較を読みます。
-Step 8〜10は仮説の記述から新規学習・複数seed比較・図の作成、Step 11は独自の報酬関数を追加して学習する例です。
+Step 8〜10は仮説の記述から共通の運搬モデルでの追加学習・複数seed比較・図の作成、Step 11は独自の報酬関数を追加して学習する例です。
 [実測結果](../results/reward_study/discussion.md)と[実験の手引き](experiment-guide.md)も同梱しています。
 Colabに入っているPyTorchを保持するので、準備のためにPyTorchを入れ替える必要はありません。
 
@@ -32,19 +32,22 @@ PYTHONPATH=src MUJOCO_GL=egl .venv/bin/python tools/train_student.py \
 学習・保存・再読込・評価が実行できるかを確認します。この結果を運搬の学習性能として使いません。
 出力先は毎回新しい名前にします。既存の重みを上書きしません。
 
+安定した報酬実験の設定と初期モデルは[学習方法の説明](training-method.md)を参照してください。
+以下のAPIの既定動作は新規学習です。
+
 本学習は[READMEのGPU環境](../README.md#ローカルで実行する)で行います。
 
 ```bash
-PYTHONPATH=src MUJOCO_GL=egl python tools/train_student.py \
-  examples/student/baseline.py --output runs/student_baseline_s42 \
-  --backend warp --seed 42 --num-envs 256 --steps 2621440 \
-  --validation-envs 256 --validate-every 10 --episodes 256 --video
+MUJOCO_GL=egl python tools/run_reward_study.py \
+  --condition baseline --seeds 42 --output runs/student_stable/main
 ```
 
 GPUの指定が必要なら`CUDA_VISIBLE_DEVICES=1`などを環境変数に追加します。
 動画のヘッドレス描画に使うGPUは、必要に応じて`MUJOCO_EGL_DEVICE_ID`で指定します。
 
 ## Pythonから使う
+
+以下は観測・行動も変更する新規学習の例です。完成例と同じ追加学習は[READMEの例](../README.md#安定した運搬を出発点にする)を使います。
 
 ```python
 from hexapod_transport_rl.student import (
@@ -68,7 +71,9 @@ run.video("runs/my_experiment/episode.mp4")
 
 観測数・離散行動数に合わせてActor/Criticの入力・出力層を自動で構成します。
 ActorとCriticはともに、選んだ観測だけを使います。PPOやTensorDictを直接編集する必要はありません。
-`run.checkpoint`は検証で選んだ`best.pt`、`run.latest`は最後の更新の`latest.pt`です。
+`checkpoint_selection="best"`（既定）では、`run.checkpoint`は検証で選んだ`best.pt`です。
+`checkpoint_selection="latest"`では、最後の更新の`latest.pt`です。`run.evaluate()`、`run.video()`、`compare()`もこの指定に従います。
+完成例の追加学習は`latest`を使い、更新前の初期方策へ差し替えません。
 最良の検証結果が初期方策だった場合は、`best.pt`に初期方策が残ります。
 
 `steps`は全並列世界の上位行動数の合計です。`num_envs * horizon`の正の整数倍にします。
@@ -80,14 +85,14 @@ PPOの設定を変える場合は、既存の`PPOSettings`を`settings=`に渡�
 
 | ファイル | 変更するもの |
 |---|---|
-| [baseline.py](../examples/student/baseline.py) | 教材の基準。14入力・停止＋8方向・標準報酬 |
+| [baseline.py](../examples/student/baseline.py) | 安定した運搬モデルと同じ14入力・停止＋8方向・標準報酬・回転対称化 |
 | [reward_study.py](../examples/student/reward_study.py) | 完成例の2条件・3 seed・学習量・評価条件 |
 | [reward_only.py](../examples/student/reward_only.py) | 目標付近で円柱の速度を抑える独自報酬を追加 |
 | [observations.py](../examples/student/observations.py) | 位置・向きの6入力へ変更。位置の正規化は基準と共通 |
 | [actions.py](../examples/student/actions.py) | 停止＋4方向へ変更。16方向・連続行動の例も記載 |
 | [custom_observation.py](../examples/student/custom_observation.py) | 自作のスカラー観測を追加 |
 | [pretrained.py](../examples/student/pretrained.py) | 既存の選択済みモデルと同じ回転対称化を有効にする |
-| [compare.py](../examples/student/compare.py) | 条件×複数seedを同じステップ数で比較しCSV保存 |
+| [compare.py](../examples/student/compare.py) | 観測・行動を変える新規学習の接続例。追加学習の高成功率は引き継がない |
 
 例えば報酬のサンプルは、次のように実行します。
 
@@ -225,6 +230,10 @@ CPU用とGPU用に別の関数を書く必要はありません。
 
 ## 既存モデルを引き継ぐ
 
+Colabの報酬実験では、この方法と学習率`3e-5`・エントロピー係数`0.001`を共通に使います。
+ActorとCriticの初期重みは全seedで共通、Adamは毎回新規です。新規学習の3 seedとは区別して解釈します。
+`episode_seconds`も変更できるため、短い操作練習でも同じモデルから開始できます。
+
 新規学習が既定です。既存の99.5%モデルと同じ構成には`CylinderPushTask.baseline()`を使います。
 ここでは`rotation="goal_octant"`が有効で、世界座標の回転対称性を利用します。
 
@@ -232,7 +241,8 @@ CPU用とGPU用に別の関数を書く必要はありません。
 PYTHONPATH=src MUJOCO_GL=egl python tools/train_student.py \
   examples/student/pretrained.py --output runs/student_finetune_s42 \
   --backend warp --steps 655360 \
-  --initial-checkpoint checkpoints/cylinder_push.pt
+  --initial-checkpoint checkpoints/cylinder_push.pt \
+  --learning-rate 3e-5 --entropy-coeff 0.001 --checkpoint-selection latest
 ```
 
 Actor・Criticの重みを引き継ぎ、Adamは新規に作ります。中断した学習の完全な再開とは異なります。
@@ -243,7 +253,7 @@ Actor・Criticの重みを引き継ぎ、Adamは新規に作ります。中断�
 旧形式のチェックポイントも読み込めます。独自関数を含む新形式は保存時のソースから復元します。
 
 `goal_octant`は既存の`baseline`14入力と停止＋8方向の世界座標行動に対応します。
-観測・行動の実験では`rotation="none"`を使います。前述の教材サンプル4条件は全て`none`です。
+観測・行動の実験では`rotation="none"`を使います。`compare.py`の観測・行動の新規学習例は、標準側も`none`に揃えています。
 回転対称化の有無も実験条件なので、観測の効果を比較するときは両条件で揃えます。
 
 ## 複数seedと卒論用の比較

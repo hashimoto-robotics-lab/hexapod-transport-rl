@@ -27,7 +27,12 @@ def test_completed_study_metrics_and_paired_initialization():
         assert len(pair) == 2
         for key in ("initial_actor_sha256", "initial_critic_sha256"):
             assert len({row[key] for row in pair}) == 1
-    assert len({row["initial_actor_sha256"] for row in rows}) == 3
+    assert len({row["initial_actor_sha256"] for row in rows}) == 1
+    assert len({row["initial_critic_sha256"] for row in rows}) == 1
+    for row in rows:
+        assert row["final_actor_sha256"] != row["initial_actor_sha256"]
+        assert row["final_critic_sha256"] != row["initial_critic_sha256"]
+    assert len({row["final_actor_sha256"] for row in rows}) == 6
     for condition in protocol["conditions"]:
         group = [row for row in rows if row["condition"] == condition]
         rates, distances = [], []
@@ -36,14 +41,18 @@ def test_completed_study_metrics_and_paired_initialization():
             report = read_json(STUDY / "evaluations" / f"{condition}_s{seed}.json")
             assert report["seed"] == protocol["evaluation"]["seed"]
             assert report["backend"] == "warp"
-            assert report["episode_count"] == len(report["episodes"]) == 256
+            assert (
+                report["episode_count"]
+                == len(report["episodes"])
+                == protocol["evaluation"]["episodes"]
+            )
             assert report["successes"] == sum(e["success"] for e in report["episodes"])
-            rate = report["successes"] / 256
+            rate = report["successes"] / protocol["evaluation"]["episodes"]
             assert float(row["success_rate"]) == rate
             distance = statistics.mean(e["distance_m"] for e in report["episodes"])
             assert float(row["mean_distance_m"]) == pytest.approx(distance)
             assert int(row["trained_steps"]) == protocol["training"]["steps"]
-            assert 0 <= int(row["selected_steps"]) <= int(row["trained_steps"])
+            assert int(row["selected_steps"]) == int(row["trained_steps"])
             checkpoint = STUDY / row["checkpoint"]
             assert (
                 hashlib.sha256(checkpoint.read_bytes()).hexdigest()
@@ -69,7 +78,7 @@ def test_completed_study_changes_one_reward_and_uses_common_layouts():
             assert task["config"] == original["config"]
             assert task["actions"] == original["actions"]
             assert task["observations"] == original["observations"]
-            assert task["rotation"] == "none"
+            assert task["rotation"] == "goal_octant"
             differences = {
                 name
                 for name in task["rewards"]
@@ -87,7 +96,11 @@ def test_completed_study_changes_one_reward_and_uses_common_layouts():
             for key in ("num_envs", "horizon", "validation_envs"):
                 assert run[key] == protocol["training"][key]
             assert run["backend"] == protocol["evaluation"]["backend"]
-            assert run["initial_checkpoint"] is None
+            assert (
+                run["initial_checkpoint"]["sha256"]
+                == protocol["initial_checkpoint_sha256"]
+            )
+            assert run["checkpoint_selection"] == "latest"
             assert run["stopped_by"] == "step_budget"
             episodes = read_json(STUDY / "evaluations" / f"{condition}_s{seed}.json")[
                 "episodes"
@@ -111,23 +124,11 @@ def test_completed_study_changes_one_reward_and_uses_common_layouts():
                 assert actual == pytest.approx(expected, abs=2e-5)
 
 
-def test_selected_checkpoints_use_validation_and_all_seeds_are_reported():
+def test_final_updated_policies_and_all_seeds_are_reported():
     with (STUDY / "learning_curve.csv").open() as stream:
         curves = list(csv.DictReader(stream))
     with (STUDY / "runs.csv").open() as stream:
         runs = list(csv.DictReader(stream))
-
-    def score(row):
-        return tuple(
-            float(row[key])
-            for key in (
-                "worst_goal_rate",
-                "worst_pose_rate",
-                "worst_heading_rate",
-                "worst_position_rate",
-                "validation_successes",
-            )
-        ) + (-float(row["validation_distance_m"]),)
 
     for run in runs:
         group = [
@@ -135,13 +136,12 @@ def test_selected_checkpoints_use_validation_and_all_seeds_are_reported():
             for row in curves
             if (row["condition"], row["seed"]) == (run["condition"], run["seed"])
         ]
-        assert len(group) == 17
+        assert len(group) == 5
         assert int(group[0]["steps"]) == 0
         assert int(group[-1]["steps"]) == int(run["trained_steps"])
         selected = [row for row in group if row["selected"] == "True"]
         assert len(selected) == 1
         assert int(selected[0]["steps"]) == int(run["selected_steps"])
-        assert score(selected[0]) == max(score(row) for row in group)
     summary = read_json(STUDY / "summary.json")
     differences = []
     for seed in (42, 43, 44):
@@ -157,3 +157,23 @@ def test_selected_checkpoints_use_validation_and_all_seeds_are_reported():
     assert summary["mean_paired_success_difference"] == pytest.approx(
         statistics.mean(differences)
     )
+
+
+def test_standard_condition_meets_the_fixed_stability_thresholds():
+    protocol = read_json(STUDY / "protocol.json")
+    summary = read_json(STUDY / "summary.json")
+    gates = protocol["acceptance"]
+    assert (
+        summary["conditions"]["baseline"]["mean_success_rate"]
+        >= gates["baseline_mean_success_rate_at_least"]
+    )
+    for seed in protocol["training_seeds"]:
+        report = read_json(STUDY / "evaluations" / f"baseline_s{seed}.json")
+        assert (
+            report["successes"] / report["episode_count"]
+            >= gates["every_baseline_seed_success_rate_at_least"]
+        )
+        assert (
+            min(s["success_rate"] for s in report["goal_sectors"])
+            >= gates["every_baseline_goal_sector_success_rate_at_least"]
+        )

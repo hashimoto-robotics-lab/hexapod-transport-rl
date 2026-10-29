@@ -2,45 +2,45 @@
   "conditions": {
     "baseline": {
       "seeds": 3,
-      "successes": 42,
-      "episodes": 768,
-      "mean_success_rate": 0.0546875,
-      "std_success_rate": 0.024394523431243743,
-      "mean_distance_m": 0.853479604213741,
-      "std_distance_m": 0.007371190278768748,
-      "mean_training_seconds": 861.5619513909332,
-      "mean_episode_seconds": 38.928385416666664
+      "successes": 3054,
+      "episodes": 3072,
+      "mean_success_rate": 0.994140625,
+      "std_success_rate": 0.0016914558667664816,
+      "mean_distance_m": 0.03394522619536625,
+      "std_distance_m": 0.0012604648141566557,
+      "mean_training_seconds": 205.0122753746497,
+      "mean_episode_seconds": 17.894270833333334
     },
     "progress40": {
       "seeds": 3,
-      "successes": 41,
-      "episodes": 768,
-      "mean_success_rate": 0.053385416666666664,
-      "std_success_rate": 0.014788823817188212,
-      "mean_distance_m": 1.2484035697040479,
-      "std_distance_m": 0.9281579943712975,
-      "mean_training_seconds": 711.617357946001,
-      "mean_episode_seconds": 38.98828125
+      "successes": 3054,
+      "episodes": 3072,
+      "mean_success_rate": 0.994140625,
+      "std_success_rate": 0.0009765625,
+      "mean_distance_m": 0.03386470100861061,
+      "std_distance_m": 0.0010233366990540316,
+      "mean_training_seconds": 235.87050357383364,
+      "mean_episode_seconds": 18.004817708333334
     }
   },
   "paired_differences": [
     {
       "seed": 42,
-      "success_rate": 0.04296875,
-      "distance_m": -0.14680152389701107
+      "success_rate": 0.0029296875,
+      "distance_m": -0.0011031797964733414
     },
     {
       "seed": 43,
-      "success_rate": -0.01953125,
-      "distance_m": -0.13905929049724364
+      "success_rate": -0.0009765625,
+      "distance_m": -0.00022597392228362878
     },
     {
       "seed": 44,
-      "success_rate": -0.02734375,
-      "distance_m": 1.4706327108651749
+      "success_rate": -0.001953125,
+      "distance_m": 0.0010875781584900324
     }
   ],
   "protocol": "protocol.json",
-  "mean_paired_success_difference": -0.0013020833333333333,
-  "std_paired_success_difference": 0.03853814736184568
+  "mean_paired_success_difference": 0.0,
+  "std_paired_success_difference": 0.0025837415147115144
 }

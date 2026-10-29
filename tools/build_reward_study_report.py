@@ -116,15 +116,18 @@ def draw_curves(curves, records, output):
             ax.fill_between(x, low, high, alpha=0.13, color=COLORS[condition])
     axes[0].set(
         ylabel="Validation success rate",
-        ylim=(0, min(1, max(0.1, curves.validation_success_rate.max() * 1.4))),
+        ylim=(
+            max(0, curves.validation_success_rate.min() - 0.03),
+            min(1, max(0.1, curves.validation_success_rate.max() * 1.4)),
+        ),
     )
     axes[1].set(ylabel="Validation final goal distance [m]")
     for ax in axes:
-        ax.set_xlabel("Training samples [million]")
+        ax.set_xlabel("Additional training samples [million]")
         ax.grid(alpha=0.2)
         ax.legend(fontsize=9)
     fig.suptitle(
-        "Validation: mean and SD over 3 seeds; dots = selected checkpoints",
+        "Validation: mean and SD over 3 seeds; dots = reported checkpoints",
         fontsize=11,
     )
     fig.tight_layout()
@@ -146,7 +149,10 @@ def draw_curves(curves, records, output):
         )
         ax.grid(axis="y", alpha=0.2)
         ax.legend(fontsize=9)
-    axes[0].set_ylim(0, min(1, max(0.1, records.success_rate.max() * 1.4)))
+    axes[0].set_ylim(
+        max(0, records.success_rate.min() - 0.03),
+        min(1, max(0.1, records.success_rate.max() * 1.4)),
+    )
     fig.tight_layout()
     fig.savefig(output / "paired_results.png", dpi=170)
     plt.close(fig)
@@ -172,12 +178,15 @@ def build(source, output):
             source_hashes = hashes
             result = json.loads((run / "study_result.json").read_text())
             row = {**result, "checkpoint": f"checkpoints/{condition}_s{seed}.pt"}
-            evaluation = json.loads((run / "evaluation_warp_s240000.json").read_text())
+            evaluation_name = f"evaluation_warp_s{protocol['evaluation']['seed']}.json"
+            evaluation = json.loads((run / evaluation_name).read_text())
             row["mean_episode_seconds"] = statistics.mean(
                 episode["seconds"] for episode in evaluation["episodes"]
             )
             rows.append(row)
-            shutil.copy2(run / "best.pt", output / row["checkpoint"])
+            shutil.copy2(
+                run / protocol["report_checkpoint"], output / row["checkpoint"]
+            )
             for name in (
                 "run.json",
                 "task.json",
@@ -188,7 +197,7 @@ def build(source, output):
                     run / name, output / "metadata" / f"{condition}_s{seed}_{name}"
                 )
             shutil.copy2(
-                run / "evaluation_warp_s240000.json",
+                run / evaluation_name,
                 output / "evaluations" / f"{condition}_s{seed}.json",
             )
             initial = json.loads((run / "initial_evaluation.json").read_text())

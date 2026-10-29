@@ -1,5 +1,7 @@
-"""Fresh PPO baseline for fair reward/observation/action comparisons."""
+"""Task definition matching the stable transport policy used by the lesson."""
 
 from hexapod_transport_rl.student import CylinderPushTask
 
-TASK = CylinderPushTask()  # Rotation disabled in all four teaching examples.
+TASK = (
+    CylinderPushTask.baseline()
+)  # Use the lesson settings and initial checkpoint for reward experiments.

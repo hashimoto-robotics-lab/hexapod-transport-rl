@@ -1,37 +1,51 @@
-# 六足1台の実験サンプル
+# 学生が編集する課題ファイル
 
-まず[学生用APIの説明](../../docs/student-api.md)を読み、リポジトリ直下から実行します。
+最初は[Colab](../../notebooks/student_api_colab.ipynb)と[学習方法の説明](../../docs/training-method.md)を読みます。
+
+| ファイル | 内容 |
+|---|---|
+| [reward_study.py](reward_study.py) | 完成例の標準条件・報酬変更条件・共通の追加学習設定 |
+| [baseline.py](baseline.py) | 学習済み運搬モデルに対応する標準課題 |
+| [reward_weights.py](reward_weights.py) | 進捗報酬の重みだけを20から40へ変更 |
+| [reward_only.py](reward_only.py) | 目標付近の円柱速度を減点する独自関数を追加 |
+| [pretrained.py](pretrained.py) | 学習済みモデルに対応する課題の別表記 |
+| [observations.py](observations.py) / [actions.py](actions.py) | 観測・行動を変更する新規学習の定義 |
+| [custom_observation.py](custom_observation.py) | 自作の観測関数 |
+| [compare.py](compare.py) | 観測・行動を変える新規学習の比較とCSV保存 |
+
+## 安定したモデルから報酬実験を行う
+
+[READMEのGPU環境](../../README.md#ローカルで実行する)で、リポジトリ直下から実行します。
 
 ```bash
-PYTHONPATH=src MUJOCO_GL=egl .venv/bin/python tools/train_student.py \
-  examples/student/reward_only.py --output runs/student_reward_smoke --smoke
+MUJOCO_GL=egl python tools/train_student.py examples/student/reward_weights.py \
+  --output runs/my_reward_s42 --backend warp --seed 42 \
+  --steps 655360 --num-envs 512 --horizon 64 \
+  --validation-envs 256 --validate-every 5 \
+  --initial-checkpoint checkpoints/cylinder_push.pt \
+  --learning-rate 3e-5 --entropy-coeff 0.001 --checkpoint-selection latest \
+  --episodes 1024 --evaluation-seed 640000 --video
 ```
 
-本学習ではCUDA対応Pythonを使い、`--smoke`を外します。
-`baseline.py`、`reward_weights.py`、`reward_only.py`、`observations.py`、`actions.py`は回転対称化なしの共通条件です。
-`custom_observation.py`は関数を追加する例、`pretrained.py`は既存モデルの構成を再現する例です。
-各ファイルは`TASK`を定義し、学習と評価は共通CLIに任せます。
+`reward_only.py`へ置き換えると独自関数を使えます。
+同じ初期モデル・設定で標準条件も学習して比較します。Colabではこの流れをまとめて実行できます。
+完成例と同じ両条件・3 seedの再実行は[こちら](../../results/reward_study/README.md)です。
 
-報酬の例は2つあります。
-
-| 課題ファイル | 編集する内容 |
-|---|---|
-| [reward_weights.py](reward_weights.py) | `goal_progress`の重みを20から40に変更 |
-| [reward_only.py](reward_only.py) | 目標の近くで円柱の速度を抑える関数を追加 |
+CPUで読み込みと新規学習の接続だけを確認する場合：
 
 ```bash
 MUJOCO_GL=egl .venv/bin/python tools/train_student.py \
-  examples/student/reward_weights.py --output runs/reward_weights_s42 --smoke
+  examples/student/reward_only.py --output runs/reward_smoke --smoke
 ```
 
-[Colab](../../notebooks/student_api_colab.ipynb)の前半は、標準条件と報酬1項目の変更を実際に学習した完成例です。
-Step 8〜10で自分の仮説から新規学習・複数seed比較・作図を進め、Step 11で独自報酬も試せます。
-[reward_study.py](reward_study.py)は完成例の固定条件です。実測値は[results/reward_study](../../results/reward_study)にあります。
+この短い試験の成功率を運搬性能として使いません。
 
-```bash
-PYTHONPATH=src MUJOCO_GL=egl .venv/bin/python examples/student/compare.py \
-  --output runs/student_comparison_smoke --smoke
-```
+## 観測・行動の研究
 
-比較結果は`comparison.csv`と`comparison.json`です。
-短い接続試験の成功率は、運搬を学習した成績として使いません。
+観測・行動を変更する例では`rotation="none"`を使います。
+今回の運搬モデルは入力・行動が異なるモデルへそのまま継承できません。
+新規学習では`initial_checkpoint`を省略し、標準側も同じ前処理にして、学習方法と予算を改めて検証します。
+今回の追加学習で得た高成功率は、この新しい条件の成績ではありません。
+
+独自の関数は`.py`のトップレベルへ書きます。課題ファイルは`TASK`を定義し、`load_task_file()`で読み込みます。
+保存時に定義ファイルとハッシュもコピーされます。詳しくは[APIリファレンス](../../docs/student-api.md)を参照してください。

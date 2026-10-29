@@ -10,7 +10,7 @@ from colab_setup import quiet_dependency_notices
 
 def main():
     quiet_dependency_notices()
-    from hexapod_transport_rl.student import compare, load_task_file, train
+    from hexapod_transport_rl import PPOSettings, compare, load_task_file, train
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("task_file", type=Path)
@@ -25,7 +25,13 @@ def main():
     parser.add_argument("--validation-envs", type=int)
     parser.add_argument("--validate-every", type=int, default=20)
     parser.add_argument("--initial-checkpoint", type=Path)
+    parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument("--entropy-coeff", type=float, default=0.01)
+    parser.add_argument(
+        "--checkpoint-selection", choices=["best", "latest"], default="best"
+    )
     parser.add_argument("--episodes", type=int, default=128)
+    parser.add_argument("--evaluation-seed", type=int, default=240000)
     parser.add_argument("--video", action="store_true")
     parser.add_argument(
         "--smoke",
@@ -51,6 +57,10 @@ def main():
         validation_envs=args.validation_envs,
         validate_every=args.validate_every,
         initial_checkpoint=args.initial_checkpoint,
+        checkpoint_selection=args.checkpoint_selection,
+        settings=PPOSettings(
+            learning_rate=args.learning_rate, entropy_coeff=args.entropy_coeff
+        ),
     )
     if args.seeds is not None:
         if args.video:
@@ -60,12 +70,15 @@ def main():
             args.output,
             seeds=tuple(args.seeds),
             evaluation_episodes=args.episodes,
+            evaluation_seed=args.evaluation_seed,
             **options,
         )
         print(json.dumps(dict(smoke=args.smoke, summary=result["summary"]), indent=2))
     else:
         run = train(task, args.output, seed=args.seed, **options)
-        report = run.evaluate(episodes=args.episodes, backend=args.backend)
+        report = run.evaluate(
+            episodes=args.episodes, seed=args.evaluation_seed, backend=args.backend
+        )
         result = dict(
             smoke=args.smoke,
             checkpoint=str(run.checkpoint),

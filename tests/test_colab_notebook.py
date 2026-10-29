@@ -109,7 +109,7 @@ def test_cloned_notebook_runs_all_steps(tmp_path, monkeypatch, backend):
     assert (result / "report.md").is_file()
     plan = json.loads((result / "experiment_plan.json").read_text())
     assert plan["changed_parameter"] == "goal_progress"
-    assert plan["evaluation_seed"] == 340000
+    assert plan["evaluation_seed"] == 640000
     assert plan["training_seeds"] == [42, 43]
     weighted = next(result.glob("reward_weights_*/task.json"))
     custom = next(result.glob("custom_reward_*/task.json"))
@@ -126,9 +126,12 @@ def test_cloned_notebook_runs_all_steps(tmp_path, monkeypatch, backend):
     for task_json in (baseline, weighted, custom):
         progress = json.loads((task_json.parent / "progress.json").read_text())
         assert progress[-1]["steps"] == 32
-        assert (task_json.parent / f"evaluation_{backend}_s340000.json").is_file()
+        assert (task_json.parent / f"evaluation_{backend}_s640000.json").is_file()
         metadata = json.loads((task_json.parent / "run.json").read_text())
         assert metadata["backend"] == backend
+        assert metadata["initial_checkpoint"] is not None
+        assert metadata["checkpoint_selection"] == "latest"
+        assert metadata["config"]["policy_rotation_mode"] == "goal_octant"
     completed = next(
         c for c in notebook.cells if "completed_results" in c.metadata.get("tags", [])
     )
