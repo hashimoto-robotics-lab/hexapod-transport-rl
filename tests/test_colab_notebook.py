@@ -1,4 +1,4 @@
-"""Clone a published snapshot and execute the notebook with installed CPU deps."""
+"""Clone a published snapshot and execute the full lesson on CPU or GPU."""
 
 import hashlib
 import json
@@ -9,17 +9,22 @@ import sys
 from pathlib import Path
 
 import nbformat
+import pytest
+import torch
 from jupyter_client import KernelManager
 from nbclient import NotebookClient
 
 
-def test_cloned_notebook_runs_all_steps(tmp_path, monkeypatch):
+@pytest.mark.parametrize("backend", ["cpu", "warp"])
+def test_cloned_notebook_runs_all_steps(tmp_path, monkeypatch, backend):
+    if backend == "warp" and not torch.cuda.is_available():
+        pytest.skip("CUDA required")
     root = Path(__file__).resolve().parents[1]
     # Publish the working files to a local Git remote. GitHub need not contain
     # uncommitted changes for this test to exercise the actual clone path.
     remote = tmp_path / "remote"
     remote.mkdir()
-    for name in ("src", "tools", "notebooks", "checkpoints"):
+    for name in ("src", "tools", "notebooks", "checkpoints", "results"):
         shutil.copytree(
             root / name, remote / name, ignore=shutil.ignore_patterns("__pycache__")
         )
@@ -43,13 +48,14 @@ def test_cloned_notebook_runs_all_steps(tmp_path, monkeypatch):
             ["git", "-C", str(remote), *args], check=True, capture_output=True
         )
     project = tmp_path / "hexapod_transport_rl"
-    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    if backend == "cpu":
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
     monkeypatch.setenv("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))
     monkeypatch.setenv("OMP_NUM_THREADS", "1")
     notebook = nbformat.read(root / "notebooks/student_api_colab.ipynb", 4)
-    notebook.cells[2].source = (
-        notebook.cells[2]
-        .source.replace(
+    setup = next(c for c in notebook.cells if "setup" in c.metadata.get("tags", []))
+    setup.source = (
+        setup.source.replace(
             '"https://github.com/hashimoto-robotics-lab/hexapod-transport-rl.git"',
             repr(remote.as_uri()),
         )
@@ -90,20 +96,21 @@ def test_cloned_notebook_runs_all_steps(tmp_path, monkeypatch):
 
     with outputs[0].open() as stream:
         rows = list(csv.DictReader(stream))
-    assert len(rows) == 10
-    assert {row["condition"] for row in rows} == {
-        "baseline",
-        "reward_weights",
-        "custom_reward",
-        "observation",
-        "action",
-    }
+    assert len(rows) == 4
+    assert {row["condition"] for row in rows} == {"baseline", "changed"}
+    assert {int(row["seed"]) for row in rows} == {42, 43}
+    assert all(int(row["trained_steps"]) == 32 for row in rows)
     assert all(int(row["episodes"]) == 4 for row in rows)
     result = outputs[0].parents[1]
-    assert (result / "baseline.mp4").stat().st_size > 1000
     assert (result / "reward_weights.mp4").stat().st_size > 1000
-    assert (result / "custom_reward.mp4").stat().st_size > 1000
-    assert (result / "reference.mp4").stat().st_size > 1000
+    assert (result / "student_learning_curves.png").stat().st_size > 1000
+    assert (result / "student_paired_results.png").stat().st_size > 1000
+    assert (result / "my_reward.py").is_file()
+    assert (result / "report.md").is_file()
+    plan = json.loads((result / "experiment_plan.json").read_text())
+    assert plan["changed_parameter"] == "goal_progress"
+    assert plan["evaluation_seed"] == 340000
+    assert plan["training_seeds"] == [42, 43]
     weighted = next(result.glob("reward_weights_*/task.json"))
     custom = next(result.glob("custom_reward_*/task.json"))
     baseline = next(result.glob("baseline_*/task.json"))
@@ -119,6 +126,15 @@ def test_cloned_notebook_runs_all_steps(tmp_path, monkeypatch):
     for task_json in (baseline, weighted, custom):
         progress = json.loads((task_json.parent / "progress.json").read_text())
         assert progress[-1]["steps"] == 32
+        assert (task_json.parent / f"evaluation_{backend}_s340000.json").is_file()
+        metadata = json.loads((task_json.parent / "run.json").read_text())
+        assert metadata["backend"] == backend
+    completed = next(
+        c for c in notebook.cells if "completed_results" in c.metadata.get("tags", [])
+    )
+    assert any(o.output_type == "display_data" for o in completed.outputs)
+    for condition in ("baseline", "progress40"):
+        assert (project / "results/reward_study/videos" / f"{condition}.mp4").is_file()
     errors = "\n".join(
         output.get("text", "")
         for cell in notebook.cells

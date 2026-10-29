@@ -9,7 +9,8 @@
 ## 最初はColabで学ぶ
 
 [ステップごとのデモ](notebooks/student_api_colab.ipynb)をColabで開き、上から実行してください。
-環境を観察し、PPOを動かし、報酬・観測・行動を変更して、複数seedの比較・動画・結果保存まで進めます。
+標準条件と、報酬1項目だけを変更した実測の完成例を読み、仮説・学習曲線・評価・動画・考察を順に確認します。
+その後、自分の仮説で新規学習し、複数seedの比較・グラフ・結果保存まで進めます。
 
 1. [Colabでデモを開く](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/student_api_colab.ipynb)をクリックします。
 2. ランタイムを **T4 GPU** に変更します。
@@ -21,8 +22,13 @@ Colabに入っているPyTorchをそのまま使います。
 別の公開済みブランチを使う場合は、最初のセルの `REVISION` を変更してください。
 再実行時は取得済みの教材を使い、学生の編集を保持します。最新版を取り直す場合は新しいセッションを使います。
 
-初期設定の `PROFILE="demo"` は2秒のエピソードを使う短い操作練習です。
-`"research"` にすると40秒の課題・655,360サンプルの学習・3つの学習seedでの比較に切り替わります。
+完成例は、各条件をランダムな重みから2,621,440サンプルずつ、3つの学習seedで実際に学習したものです。
+`goal_progress`の重みを20から40へ変更し、各方策を共通の未使用256配置で評価しています。
+結果を読むために再学習する必要はありません。[実測結果と考察](results/reward_study/discussion.md)も参照できます。
+今回の平均成功率は標準5.47%、変更5.34%でした。標準条件も学習が不安定なため、その限界と次の実験計画まで教材に記載しています。
+
+自分で動かす部分の初期設定 `PROFILE="demo"` は2秒・32サンプルの短い操作練習です。
+`"research"` にすると完成例と同じ40秒・2,621,440サンプル・3つの学習seedに切り替わります。
 学習時間・成功率は環境と学習予算に依存します。短いデモの成績を学習性能として使わないでください。
 
 ## ローカルで実行する
@@ -44,7 +50,8 @@ python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl
 python -m pip install -e '.[warp,notebook]'
 MUJOCO_GL=egl python tools/train_student.py \
   examples/student/baseline.py --output runs/baseline_s42 \
-  --backend warp --num-envs 256 --steps 655360 --validation-envs 256
+  --backend warp --num-envs 256 --steps 2621440 \
+  --validation-envs 256 --validate-every 10
 ```
 
 ## 学生が編集するAPI
@@ -68,9 +75,11 @@ run.video()
 
 ## 報酬を変えて学習する例
 
-ColabのStep 5では、目標へ近づけたときの報酬を20から40に変更し、その場で新規学習・評価・動画の比較を行います。
-Step 7では、目標の近くで円柱が速く動くと減点する関数を書き、報酬だけを変更して学習します。
+ColabのStep 0〜7は、完成した比較実験を読む教材です。
+Step 8〜10では、自分の仮説を書き、重み1つを変えて新規学習・共通配置での評価・複数seedの比較・図の保存を行います。
+Step 11では、目標の近くで円柱が速く動くと減点する独自関数を書き、報酬だけを変更して学習します。
 各学習の保存先に時刻を付けるので、値を変えてセルを再実行できます。
+[実験の進め方と考察の書式](docs/experiment-guide.md)に、結果が予想と異なったときの確認事項もまとめています。
 
 同じ課題をPythonファイルから学習する例もあります。
 
@@ -105,8 +114,9 @@ notebooks/student_api_colab.ipynb  # 最初に開く教材（1冊）
 examples/student/                 # 学生が変更する小さな課題ファイル
 src/hexapod_transport_rl/         # 学生API、PPO、CPU/GPU物理、機体・歩行資産
 checkpoints/                     # 参照方策1つと来歴・ハッシュ
-docs/student-api.md              # APIリファレンス
-tools/                          # 学習CLI、Colab準備
+results/reward_study/             # 完成例の実測値・図・動画・評価用方策
+docs/                            # APIリファレンス、実験と考察の手引き
+tools/                           # 学習CLI、Colab準備、完成例の再実行・集計
 tests/                          # 物理・PPO・学生API・教材の検証
 pyproject.toml / uv.lock          # 依存関係
 ```
@@ -118,5 +128,5 @@ pyproject.toml / uv.lock          # 依存関係
 
 ```bash
 uv run ruff check src tests tools
-MUJOCO_GL=egl uv run pytest
+MUJOCO_GL=egl uv run --extra notebook pytest
 ```

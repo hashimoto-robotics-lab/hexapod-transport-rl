@@ -11,9 +11,11 @@
 
 ## Colabから学ぶ
 
-[Step 0〜10のノートブック](../notebooks/student_api_colab.ipynb)を用意しています。
+[Step 0〜13のノートブック](../notebooks/student_api_colab.ipynb)を用意しています。
 最初のセルでGitHubから教材をcloneします。開き方と取得するブランチの指定は[README](../README.md#最初はcolabで学ぶ)を参照してください。
-Step 5は報酬の重みを変更して新規学習する例、Step 7は独自の報酬関数だけを追加して学習する例です。
+Step 0〜7では、実際に学習した標準条件と報酬1項目の比較を読みます。
+Step 8〜10は仮説の記述から新規学習・複数seed比較・図の作成、Step 11は独自の報酬関数を追加して学習する例です。
+[実測結果](../results/reward_study/discussion.md)と[実験の手引き](experiment-guide.md)も同梱しています。
 Colabに入っているPyTorchを保持するので、準備のためにPyTorchを入れ替える必要はありません。
 
 ## 最初に動かす
@@ -35,8 +37,8 @@ PYTHONPATH=src MUJOCO_GL=egl .venv/bin/python tools/train_student.py \
 ```bash
 PYTHONPATH=src MUJOCO_GL=egl python tools/train_student.py \
   examples/student/baseline.py --output runs/student_baseline_s42 \
-  --backend warp --seed 42 --num-envs 512 --steps 655360 \
-  --validation-envs 1024 --validate-every 10 --episodes 256 --video
+  --backend warp --seed 42 --num-envs 256 --steps 2621440 \
+  --validation-envs 256 --validate-every 10 --episodes 256 --video
 ```
 
 GPUの指定が必要なら`CUDA_VISIBLE_DEVICES=1`などを環境変数に追加します。
@@ -79,6 +81,7 @@ PPOの設定を変える場合は、既存の`PPOSettings`を`settings=`に渡�
 | ファイル | 変更するもの |
 |---|---|
 | [baseline.py](../examples/student/baseline.py) | 教材の基準。14入力・停止＋8方向・標準報酬 |
+| [reward_study.py](../examples/student/reward_study.py) | 完成例の2条件・3 seed・学習量・評価条件 |
 | [reward_only.py](../examples/student/reward_only.py) | 目標付近で円柱の速度を抑える独自報酬を追加 |
 | [observations.py](../examples/student/observations.py) | 位置・向きの6入力へ変更。位置の正規化は基準と共通 |
 | [actions.py](../examples/student/actions.py) | 停止＋4方向へ変更。16方向・連続行動の例も記載 |

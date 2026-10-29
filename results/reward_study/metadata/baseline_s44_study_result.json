@@ -1,0 +1,17 @@
+{
+  "condition": "baseline",
+  "seed": 44,
+  "trained_steps": 2621440,
+  "selected_steps": 1802240,
+  "wall_training_seconds": 884.6071173497476,
+  "successes": 19,
+  "episodes": 256,
+  "success_rate": 0.07421875,
+  "mean_distance_m": 0.8494485876581166,
+  "gpu": "NVIDIA RTX A6000",
+  "python": "3.12.13",
+  "torch": "2.11.0+cu128",
+  "initial_actor_sha256": "d6e25a75bf16e8e2c7adda6a6b412768308879e64fd835d8670b43c9a313a45b",
+  "initial_critic_sha256": "405f0aa85c3ab7776f3c0a66355fa01b742872601c2fa0f94fe06aad0541d261",
+  "selected_checkpoint_sha256": "5be72f5d82f75687f34cb472862a5e3daa6c6e9e38ed49b9c2cfd3abd858acc8"
+}

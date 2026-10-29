@@ -1,0 +1,63 @@
+{
+  "study": "reward_progress_20_vs_40",
+  "source_commit": "ab70e5494bacfd794923ce09ef1b454628f32b6c",
+  "hypothesis": "Doubling only goal_progress from 20 to 40 will improve success rate and reduce final goal distance at a fixed training budget. A possible tradeoff is overshooting near the goal.",
+  "conditions": {
+    "baseline": {
+      "goal_progress": 20.0
+    },
+    "progress40": {
+      "goal_progress": 40.0
+    }
+  },
+  "rotation": "none",
+  "training_seeds": [
+    42,
+    43,
+    44
+  ],
+  "training": {
+    "steps": 2621440,
+    "num_envs": 256,
+    "horizon": 64,
+    "validation_envs": 256,
+    "validate_every": 10,
+    "initial_checkpoint": null,
+    "max_seconds": null
+  },
+  "evaluation": {
+    "episodes": 256,
+    "seed": 240000,
+    "backend": "warp"
+  },
+  "checkpoint_selection": "best.pt selected only on seed 131000 validation; initial candidate allowed; never select using final evaluation",
+  "primary_metric": "success_rate",
+  "secondary_metrics": [
+    "mean_distance_m",
+    "mean_episode_seconds"
+  ],
+  "report_uncertainty": "mean and sample standard deviation across the three training seeds; report all paired differences",
+  "video": {
+    "training_seed": 42,
+    "episode_seed": 250000,
+    "backend": "native CPU MuJoCo"
+  },
+  "pilot": {
+    "training_seed": 7,
+    "steps": 655360,
+    "purpose": "Measure throughput and learning at the previous lesson budget; excluded from final comparison; no final held-out evaluation"
+  },
+  "budget_decision": "Use four times the previous lesson budget, fixed before any final comparison evaluation. Physics, reset distribution, network, PPO defaults and action/observation definitions are unchanged.",
+  "ppo": {
+    "epochs": 4,
+    "minibatch_size": 2048,
+    "learning_rate": 0.0003,
+    "gamma": 0.995,
+    "gae_lambda": 0.95,
+    "clip_epsilon": 0.2,
+    "entropy_coeff": 0.01,
+    "critic_coeff": 0.5,
+    "max_grad_norm": 0.5
+  },
+  "hardware_note": "Both GPUs are RTX A6000. GPU 1 also runs an unrelated workload. Wall times describe this shared workstation and are not controlled speed comparisons or Colab T4 benchmarks."
+}

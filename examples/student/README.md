@@ -24,7 +24,9 @@ MUJOCO_GL=egl .venv/bin/python tools/train_student.py \
   examples/student/reward_weights.py --output runs/reward_weights_s42 --smoke
 ```
 
-[ColabのStep 5と7](../../notebooks/student_api_colab.ipynb)では、標準課題と同じseed・サンプル数で学習し、成功率・距離・動画を比較できます。
+[Colab](../../notebooks/student_api_colab.ipynb)の前半は、標準条件と報酬1項目の変更を実際に学習した完成例です。
+Step 8〜10で自分の仮説から新規学習・複数seed比較・作図を進め、Step 11で独自報酬も試せます。
+[reward_study.py](reward_study.py)は完成例の固定条件です。実測値は[results/reward_study](../../results/reward_study)にあります。
 
 ```bash
 PYTHONPATH=src MUJOCO_GL=egl .venv/bin/python examples/student/compare.py \

@@ -1,0 +1,287 @@
+{
+  "algorithm": "TorchRL ClipPPOLoss + GAE, single actor and single critic",
+  "config": {
+    "num_robots": 1,
+    "shape": "cylinder",
+    "cargo_mass": 2.0,
+    "cargo_friction": 0.3,
+    "cargo_radius": 0.25,
+    "goal_distance": 0.4,
+    "episode_seconds": 40.0,
+    "high_level_decimation": 5,
+    "position_tolerance": 0.05,
+    "yaw_tolerance": 0.08726646259971647,
+    "success_hold_seconds": 0.4,
+    "arena_radius": 8.0,
+    "push_gap": 0.28,
+    "max_yaw_degrees": 30.0,
+    "min_yaw_degrees": 5.0,
+    "goal_lateral_range": 0.08,
+    "position_jitter": 0.04,
+    "yaw_jitter": 0.12,
+    "robot_start": "goal_side",
+    "start_clearance": 0.55,
+    "rear_start_fraction": 0.0,
+    "start_angle_degrees": 180.0,
+    "approach_clearance": 0.4,
+    "goal_pose": [
+      0.4,
+      0.0,
+      0.7853981633974483
+    ],
+    "target_heading_gain": 1.5,
+    "goal_mode": "position",
+    "direction_speed": 0.15,
+    "approach_strategy": "rear_contact",
+    "rear_approach_gain": 2.0,
+    "approach_cost_weight": 1.0,
+    "goal_distance_cost_weight": 4.0,
+    "success_bonus": 10.0,
+    "spawn_mode": "around",
+    "spawn_radius_min": 0.65,
+    "spawn_radius_max": 1.0,
+    "spawn_azimuth_degrees": null,
+    "spawn_heading_mode": "uniform",
+    "spawn_heading_offset_degrees": null,
+    "goal_position_mode": "uniform",
+    "goal_radius_min": 0.3,
+    "goal_radius_max": 0.6,
+    "goal_azimuth_degrees": null,
+    "policy_rotation_mode": "none"
+  },
+  "settings": {
+    "epochs": 4,
+    "minibatch_size": 2048,
+    "learning_rate": 0.0003,
+    "gamma": 0.995,
+    "gae_lambda": 0.95,
+    "clip_epsilon": 0.2,
+    "entropy_coeff": 0.01,
+    "critic_coeff": 0.5,
+    "max_grad_norm": 0.5
+  },
+  "action_mode": "discrete",
+  "direction_table": [
+    [
+      0.0,
+      0.0
+    ],
+    [
+      1.0,
+      0.0
+    ],
+    [
+      0.7071067811865476,
+      0.7071067811865475
+    ],
+    [
+      6.123233995736766e-17,
+      1.0
+    ],
+    [
+      -0.7071067811865475,
+      0.7071067811865476
+    ],
+    [
+      -1.0,
+      1.2246467991473532e-16
+    ],
+    [
+      -0.7071067811865477,
+      -0.7071067811865475
+    ],
+    [
+      -1.8369701987210297e-16,
+      -1.0
+    ],
+    [
+      0.7071067811865474,
+      -0.7071067811865477
+    ]
+  ],
+  "student_task": {
+    "version": 1,
+    "config": {
+      "num_robots": 1,
+      "shape": "cylinder",
+      "cargo_mass": 2.0,
+      "cargo_friction": 0.3,
+      "cargo_radius": 0.25,
+      "goal_distance": 0.4,
+      "episode_seconds": 40.0,
+      "high_level_decimation": 5,
+      "position_tolerance": 0.05,
+      "yaw_tolerance": 0.08726646259971647,
+      "success_hold_seconds": 0.4,
+      "arena_radius": 8.0,
+      "push_gap": 0.28,
+      "max_yaw_degrees": 30.0,
+      "min_yaw_degrees": 5.0,
+      "goal_lateral_range": 0.08,
+      "position_jitter": 0.04,
+      "yaw_jitter": 0.12,
+      "robot_start": "goal_side",
+      "start_clearance": 0.55,
+      "rear_start_fraction": 0.0,
+      "start_angle_degrees": 180.0,
+      "approach_clearance": 0.4,
+      "goal_pose": [
+        0.4,
+        0.0,
+        0.7853981633974483
+      ],
+      "target_heading_gain": 1.5,
+      "goal_mode": "position",
+      "direction_speed": 0.15,
+      "approach_strategy": "rear_contact",
+      "rear_approach_gain": 2.0,
+      "approach_cost_weight": 1.0,
+      "goal_distance_cost_weight": 4.0,
+      "success_bonus": 10.0,
+      "spawn_mode": "around",
+      "spawn_radius_min": 0.65,
+      "spawn_radius_max": 1.0,
+      "spawn_azimuth_degrees": null,
+      "spawn_heading_mode": "uniform",
+      "spawn_heading_offset_degrees": null,
+      "goal_position_mode": "uniform",
+      "goal_radius_min": 0.3,
+      "goal_radius_max": 0.6,
+      "goal_azimuth_degrees": null,
+      "policy_rotation_mode": "none"
+    },
+    "rotation": "none",
+    "observations": [
+      {
+        "func": {
+          "kind": "builtin",
+          "name": "baseline"
+        },
+        "scale": 1.0,
+        "name": "baseline",
+        "enabled": true
+      }
+    ],
+    "rewards": {
+      "goal_progress": {
+        "func": {
+          "kind": "builtin",
+          "name": "goal_progress"
+        },
+        "weight": 20.0,
+        "per_second": false
+      },
+      "approach_progress": {
+        "func": {
+          "kind": "builtin",
+          "name": "approach_progress"
+        },
+        "weight": 2.0,
+        "per_second": false
+      },
+      "goal_distance": {
+        "func": {
+          "kind": "builtin",
+          "name": "goal_distance"
+        },
+        "weight": -4.0,
+        "per_second": true
+      },
+      "approach_distance": {
+        "func": {
+          "kind": "builtin",
+          "name": "approach_distance"
+        },
+        "weight": -1.0,
+        "per_second": true
+      },
+      "time": {
+        "func": {
+          "kind": "builtin",
+          "name": "time"
+        },
+        "weight": -0.02,
+        "per_second": true
+      },
+      "success": {
+        "func": {
+          "kind": "builtin",
+          "name": "success"
+        },
+        "weight": 10.0,
+        "per_second": false
+      },
+      "failure": {
+        "func": {
+          "kind": "builtin",
+          "name": "failure"
+        },
+        "weight": -10.0,
+        "per_second": false
+      }
+    },
+    "actions": {
+      "kind": "discrete",
+      "count": 8,
+      "include_stop": true,
+      "frame": "world",
+      "speed": 0.15
+    },
+    "policy_signature": {
+      "observations": [
+        {
+          "func": {
+            "kind": "builtin",
+            "name": "baseline"
+          },
+          "scale": 1.0,
+          "enabled": true
+        }
+      ],
+      "actions": {
+        "kind": "discrete",
+        "count": 8,
+        "include_stop": true,
+        "frame": "world",
+        "speed": 0.15
+      }
+    },
+    "observation_layout": [
+      {
+        "name": "baseline",
+        "start": 0,
+        "stop": 14,
+        "size": 14,
+        "scale": 1.0,
+        "enabled": true
+      }
+    ]
+  },
+  "seed": 44,
+  "num_envs": 256,
+  "horizon": 64,
+  "requested_steps": 2621440,
+  "max_seconds": null,
+  "backend": "warp",
+  "initialization": "random actor and critic, empty Adam; no demonstrations",
+  "initial_checkpoint": null,
+  "provenance": {
+    "env_version": "hexapod-leg-push-v1",
+    "asset_root": "/home/hashimoto/2026/10/hexapod_transport_rl/src/hexapod_transport_rl",
+    "low_level_sha256": "98b4701b8e1296ab33ac33f20339f8b13fa41ced177699bc91ecd1a71fbcd82c",
+    "robot_xml_sha256": "58bed5a59c483ee607526ce299afa418ce78ae730de2978a56da7ef9c4f447d5",
+    "walking_checkpoint_iteration": 1800,
+    "action_type": "world-direction-to-original-walking-commands",
+    "walking_model_loaded": true
+  },
+  "capture_step": true,
+  "bootstrap_rollouts": 0,
+  "validation_envs": 256,
+  "selection_criterion": "worst goal-direction sector, worst position/heading cell, worst heading sector, worst position sector, total successes, mean distance",
+  "curriculum": null,
+  "steps": 2621440,
+  "rollouts": 160,
+  "seconds": 884.5733617488295,
+  "stopped_by": "step_budget",
+  "training_stage": "fixed_task"
+}
