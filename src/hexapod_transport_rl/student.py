@@ -1,4 +1,4 @@
-"""Student-facing cylinder pushing: change terms, keep the original PPO/physics.
+"""Cylinder pushing experiments with configurable terms and shared PPO/physics.
 
 See cylinder_pushing.ipynb for runnable experiments.
 """
@@ -286,7 +286,7 @@ class CylinderPushTask:
             or self.config.goal_mode != "position"
         ):
             raise ValueError(
-                "Student tasks require a position-only SinglePushConfig cylinder"
+                "Tasks require a position-only SinglePushConfig cylinder"
             )
         if not isinstance(self.actions, (DiscreteDirections, ContinuousVelocity)):
             raise TypeError("Use DiscreteDirections or ContinuousVelocity")
@@ -383,11 +383,11 @@ class CylinderPushTask:
     @classmethod
     def from_dict(cls, data, artifact_dir=None):
         if data.get("version") != 1:
-            raise ValueError("Unsupported student task version")
+            raise ValueError("Unsupported task version")
         actions = dict(data["actions"])
         kind = actions.pop("kind")
         if kind not in ("discrete", "continuous"):
-            raise ValueError("Unsupported student action type")
+            raise ValueError("Unsupported action type")
         return cls(
             config=SinglePushConfig.from_checkpoint(data["config"]),
             rotation=data["rotation"],
@@ -423,7 +423,7 @@ def available_rewards():
 
 
 def load_task(checkpoint):
-    """Restore a saved student task, or the exact legacy policy interface."""
+    """Restore a saved task, or the exact legacy policy interface."""
     saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
     if saved.get("student_task") is not None:
         return CylinderPushTask.from_dict(
@@ -436,7 +436,7 @@ def load_task(checkpoint):
     cfg = SinglePushConfig.from_checkpoint(saved["config"])
     if cfg.shape != "cylinder" or cfg.goal_mode != "position":
         raise ValueError(
-            "Only legacy cylinder position tasks can enter the student API"
+            "Only legacy cylinder position tasks can enter the task API"
         )
     actions = (
         DiscreteDirections(speed=cfg.direction_speed)
@@ -523,7 +523,7 @@ def train(
     checkpoint_selection="best",
     curriculum=None,
 ):
-    """Run the existing ClipPPOLoss/GAE loop with a student task.
+    """Run the existing ClipPPOLoss/GAE loop with a configured task.
 
     A fresh actor/critic is the default. initial_checkpoint explicitly requests
     compatible actor/critic weights and a fresh optimizer, not a resumed run.

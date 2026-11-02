@@ -1,4 +1,4 @@
-"""Named, batched physical state and pure tensor terms for student experiments."""
+"""Named, batched physical state and pure tensor terms for experiments."""
 
 from dataclasses import dataclass
 

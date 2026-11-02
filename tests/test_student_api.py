@@ -1,4 +1,4 @@
-"""Student terms, original physics parity, real PPO, and portable task sources."""
+"""Configurable terms, physics parity, real PPO, and portable task sources."""
 
 import json
 import os

@@ -570,7 +570,7 @@ def train_ppo(
     if student_task is not None:
         if student_task.config != config or student_task.action_mode != action_mode:
             raise ValueError(
-                "Student task and PPO environment configuration must agree"
+                "Task and PPO environment configuration must agree"
             )
         env = student_task.make_env(num_envs=num_envs, backend=backend)
     else:

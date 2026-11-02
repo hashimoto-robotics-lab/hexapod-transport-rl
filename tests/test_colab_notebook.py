@@ -177,10 +177,10 @@ assert example_state is not after
     assert (result / "baseline.mp4").stat().st_size > 1000
     if optional_experiments:
         assert (result / "reward_weights.mp4").stat().st_size > 1000
-    assert (result / "student_learning_curves.png").stat().st_size > 1000
-    assert (result / "student_paired_results.png").stat().st_size > 1000
-    assert (result / "student_results.csv").is_file()
-    assert (result / "student_summary.csv").is_file()
+    assert (result / "experiment_learning_curves.png").stat().st_size > 1000
+    assert (result / "experiment_paired_results.png").stat().st_size > 1000
+    assert (result / "experiment_results.csv").is_file()
+    assert (result / "experiment_summary.csv").is_file()
     assert (result / "my_reward.py").is_file()
     assert (result / "report.md").is_file()
     report_text = (result / "report.md").read_text()
@@ -203,7 +203,7 @@ assert example_state is not after
             )
     else:
         assert "比較未実施（標準条件のみ）" in report_text
-        assert "未計算（学習1回）" in (result / "student_summary.csv").read_text()
+        assert "未計算（学習1回）" in (result / "experiment_summary.csv").read_text()
     plan = json.loads((result / "experiment_plan.json").read_text())
     assert plan["changed_parameter"] == "goal_progress"
     assert plan["evaluation_seed"] == 940000

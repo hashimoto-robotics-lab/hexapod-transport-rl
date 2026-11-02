@@ -1,4 +1,4 @@
-"""Install the teaching environment before importing simulation libraries."""
+"""Install the notebook environment before importing simulation libraries."""
 
 import importlib
 import importlib.util
@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 def quiet_dependency_notices():
-    """Keep known compatibility notices out of teaching output."""
+    """Keep known compatibility notices out of notebook output."""
     for message in (
         r"Creating .* which inherits from WeightUpdaterBase is deprecated\.",
         r"`torch\.jit\.load` is deprecated\.",
@@ -20,7 +20,7 @@ def quiet_dependency_notices():
 
 
 def prepare_colab(project_dir, *, install=True):
-    """Use the runtime's PyTorch and prepare the simulator before student imports."""
+    """Use the runtime's PyTorch and prepare the simulator before imports."""
     project_dir = Path(project_dir).resolve()
     import torch
 

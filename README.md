@@ -2,8 +2,8 @@
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/cylinder_pushing.ipynb)
 
-TorchRLのPPOチュートリアルを終えた学生向けの教材です。
-六足ロボット1台で円柱を目標まで押す課題を使い、観測・行動・報酬の設定から、学習・比較・考察まで進めます。
+TorchRLのPPOで、六足ロボット1台が円柱を目標まで押す動作を学習します。
+観測・行動・報酬の設定から、学習・比較・考察まで進める教材です。
 **方向を選ぶPPOはランダムな重みから学習し、18関節を動かす歩行モデルは固定して使います。**
 
 ## 進め方
@@ -29,7 +29,7 @@ colab_setup.py             # インストールと描画の準備
 pyproject.toml             # 必要なライブラリとパッケージ設定
 src/hexapod_transport_rl/  # API・PPO・物理・機体・固定歩行モデル
 results/                  # 教材が表示する表・図・動画・考察
-tests/                   # APIと教材の動作確認（受講時は実行不要）
+tests/                   # APIと教材の動作確認（ノートブックの実行には不要）
 ```
 
 実験を実行すると`runs/`に結果を保存します。Colab終了前にノートブック末尾の保存セルで持ち帰ってください。

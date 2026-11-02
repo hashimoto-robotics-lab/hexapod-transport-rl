@@ -1,4 +1,4 @@
-"""Internal adapter: student terms on the original articulated SinglePushEnv."""
+"""Internal adapter: configurable terms on the articulated SinglePushEnv."""
 
 import numpy as np
 import torch
@@ -255,5 +255,5 @@ class StudentPushEnv(SinglePushEnv):
         super().check_physics()
         if bool(self._invalid_terms):
             raise FloatingPointError(
-                "Student observation/reward contains NaN or infinity; check custom terms"
+                "Observation/reward contains NaN or infinity; check custom terms"
             )

@@ -64,7 +64,7 @@ def test_colab_rendering_setup(tmp_path, monkeypatch, setup_module):
     assert {"libegl1", "libgl1", "libosmesa6"}.issubset(apt[1])
 
 
-def test_setup_keeps_student_warnings_visible(tmp_path, setup_module):
+def test_setup_keeps_custom_warnings_visible(tmp_path, setup_module):
     with warnings.catch_warnings(record=True) as observed:
         warnings.simplefilter("always")
         setup_module.prepare_colab(tmp_path, install=False)
@@ -74,8 +74,8 @@ def test_setup_keeps_student_warnings_visible(tmp_path, setup_module):
             stacklevel=2,
         )
         warnings.warn(
-            "Student reward returned an unexpected value", RuntimeWarning, stacklevel=2
+            "Custom reward returned an unexpected value", RuntimeWarning, stacklevel=2
         )
     assert [str(item.message) for item in observed] == [
-        "Student reward returned an unexpected value"
+        "Custom reward returned an unexpected value"
     ]

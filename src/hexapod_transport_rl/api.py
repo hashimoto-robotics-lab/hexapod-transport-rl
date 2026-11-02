@@ -1,4 +1,4 @@
-"""Internal Gymnasium adapter and native MuJoCo renderer for the student task."""
+"""Internal Gymnasium adapter and native MuJoCo renderer for cylinder pushing."""
 
 from copy import deepcopy
 from pathlib import Path
@@ -18,7 +18,7 @@ from .types import Info, Observation, ResetResult, StepResult
 class HexapodPushEnv(gym.Env):
     """Native renderer and episode bookkeeping, specialized by SinglePushGymEnv.
 
-    Student code creates environments through CylinderPushTask.make_env().
+    Create environments through CylinderPushTask.make_env().
     Episodes retain the final transition until an explicit reset.
     """
 

@@ -1,4 +1,4 @@
-"""Student API for single-hexapod cylinder pushing with TorchRL PPO."""
+"""API for single-hexapod cylinder pushing with TorchRL PPO."""
 
 from .curriculum import PushCurriculum, PushPhase
 from .single_push import SinglePushConfig, SinglePushEnv
