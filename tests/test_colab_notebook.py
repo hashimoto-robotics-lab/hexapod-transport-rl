@@ -67,6 +67,7 @@ def test_cloned_notebook_runs_all_steps(
         "RUN_REWARD_EXPERIMENT",
         "RUN_MULTISEED_STUDY",
         "RUN_CUSTOM_REWARD",
+        "RUN_INPUT_EXPERIMENT",
     ):
         flag_cell = next(c for c in notebook.cells if f"{flag} = False" in c.source)
         if optional_experiments:
@@ -121,6 +122,23 @@ assert env.is_closed and small_env.is_closed
 """.strip()
         ),
     )
+    # Exercise the new reward function before spending time training it. Both
+    # sides of the distance threshold must retain the world's batch dimension.
+    custom_preview = next(
+        i for i, cell in enumerate(notebook.cells) if cell.id == "b3ae2e0f"
+    )
+    notebook.cells.insert(
+        custom_preview + 1,
+        nbformat.v4.new_code_cell(
+            """
+assert custom_contribution.shape == (1,)
+assert torch.allclose(custom_contribution, torch.tensor([-0.004]))
+far_state = replace(example_state, goal_distance=example_state.goal_distance.new_tensor([0.15]))
+assert torch.equal(custom_task.rewards["near_goal_speed"].compute(before, far_state), torch.zeros(1))
+assert example_state is not after
+""".strip()
+        ),
+    )
     manager = KernelManager(kernel_name="python3")
     manager.kernel_spec.argv = [
         sys.executable,
@@ -159,8 +177,31 @@ assert env.is_closed and small_env.is_closed
         assert (result / "reward_weights.mp4").stat().st_size > 1000
     assert (result / "student_learning_curves.png").stat().st_size > 1000
     assert (result / "student_paired_results.png").stat().st_size > 1000
+    assert (result / "student_results.csv").is_file()
+    assert (result / "student_summary.csv").is_file()
     assert (result / "my_reward.py").is_file()
     assert (result / "report.md").is_file()
+    report_text = (result / "report.md").read_text()
+    if optional_experiments:
+        assert "標準と変更条件を実行済み" in report_text
+        input_study = next(result.glob("input_comparison_*/comparison.csv"))
+        import csv
+
+        with input_study.open() as stream:
+            input_rows = list(csv.DictReader(stream))
+        assert len(input_rows) == 4
+        assert {row["condition"] for row in input_rows} == {"reference", "modified"}
+        for condition, dimensions in (("reference", 14), ("modified", 6)):
+            task_json = input_study.parent / condition / "seed_42" / "task.json"
+            input_config = json.loads(task_json.read_text())
+            assert input_config["rotation"] == "none"
+            assert (
+                sum(row["size"] for row in input_config["observation_layout"])
+                == dimensions
+            )
+    else:
+        assert "比較未実施（標準条件のみ）" in report_text
+        assert "未計算（学習1回）" in (result / "student_summary.csv").read_text()
     plan = json.loads((result / "experiment_plan.json").read_text())
     assert plan["changed_parameter"] == "goal_progress"
     assert plan["evaluation_seed"] == 940000

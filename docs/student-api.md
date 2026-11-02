@@ -1,13 +1,26 @@
 # 六足1台の学生用API
 
 報酬・観測・行動を変更し、同じ六足機体で比較実験するための窓口です。
-元の18関節・固定歩行モデル・モーターモデル・MuJoCo/Warp・TorchRLの`ClipPPOLoss`とGAEを引き継ぎます。
-学生は`CylinderPushTask`と小さなPython関数を編集します。
+対象はTorchRLのPPOチュートリアルを終えた学生です。まず[Colab教材](../notebooks/student_api_colab.ipynb)を順に進め、この文書は引数や組込項を調べるときに使います。
+方向を選ぶPPOと、18関節を動かす固定歩行モデルを組み合わせます。学生は`CylinderPushTask`と小さなPython関数を編集します。
+
+| 窓口 | 役割 |
+|---|---|
+| `CylinderPushTask` | 観測・行動・報酬などの設定 |
+| `ObservationTerm` / `RewardTerm` | 観測の1項 / 報酬の1項の計算と係数 |
+| `task.make_env()` | 物理シミュレーション環境を作り、TorchRLの`reset`・`step`を使う |
+| `train()` | 経験収集とPPOの更新を実行し、学習結果`TrainingRun`を返す |
+| `run.evaluate()` / `run.video()` | 保存したモデルを評価 / 1エピソードを動画に保存 |
+| `compare()` | 複数の条件・学習seedをそれぞれ学習し、評価表を保存 |
+
+seedは乱数の初期値、1エピソードは`reset()`から成功・失敗・時間切れまでです。
+学習seedは初期重みや経験収集の乱数、評価seedは試す初期配置に使います。
 
 標準課題は、直径50 cmの円柱を目標位置まで押す問題です。
 開始位置は円柱から0.65〜1.00 mの円環、機体の水平な向きは全周、目標は距離0.30〜0.60 m・全方向でランダムです。
 成功は位置誤差5 cm未満・円柱速度0.06 m/s未満を0.4秒保持、制限時間40秒です。
-物理200 Hz・歩行25 Hz・上位行動5 Hzを使います。報酬や方策の観測を変えても成功判定は同じです。
+物理計算は1秒に200回、歩行指令は25回、PPOの方向選択は5回です。1ステップの方向選択で0.2秒進みます。
+報酬や方策の観測を変えても成功判定は同じです。
 
 ## Colabから学ぶ
 
@@ -21,8 +34,9 @@ Step 8〜9では標準条件をゼロから学習し、評価と動画を確認�
 [実測結果](../results/reward_study/discussion.md)と[実験の手引き](experiment-guide.md)も同梱しています。
 Colabに入っているPyTorchを保持するので、準備のためにPyTorchを入れ替える必要はありません。
 
-## 最初に動かす
+## ローカルの計算機で最初に動かす
 
+Colabを使う場合は、ノートブックのStep 0で準備します。以下は自分の計算機にインストールする場合の手順です。
 リポジトリ直下で実行します。通常の`.venv`はCPU版です。
 
 ```bash
@@ -50,38 +64,38 @@ GPUの指定が必要なら`CUDA_VISIBLE_DEVICES=1`などを環境変数に追�
 
 ## Pythonから使う
 
-以下は観測・行動も変更するAPIの例です。この入力・行動での学習性能は別途検証が必要です。
-標準条件を学習する場合は、後述のカリキュラムと完成例の学習設定を使います。
+最初は標準設定の環境を1つ作り、観測を受け取って、世界の+X方向を1ステップ試します。
+画像表示は省略しています。`td["observation"]`は方策入力、`transition["next"]`は次の観測や報酬です。
+`backend`は物理計算の方法で、`"cpu"`はCPUのMuJoCo、`"warp"`はGPUのMuJoCo Warp、`"auto"`はGPUがあればWarpを選びます。
 
 ```python
-from hexapod_transport_rl.student import (
-    CylinderPushTask, DiscreteDirections, train,
-)
+import torch
+from hexapod_transport_rl import CylinderPushTask
 
-task = CylinderPushTask(
-    observations=("robot_to_cargo", "cargo_to_goal", "robot_heading"),
-    actions=DiscreteDirections(count=4, include_stop=True),
-    rewards={
-        "goal_progress": 20.0,
-        "time": -0.02,
-        "success": 10.0,
-        "failure": -10.0,
-    },
-)
-run = train(task, "runs/my_experiment", seed=42, steps=655_360)
-report = run.evaluate(episodes=256, seed=240000)
-run.video("runs/my_experiment/episode.mp4")
+task = CylinderPushTask.baseline()
+env = task.make_env(num_envs=1, backend="cpu")
+env.set_seed(42)
+td = env.reset()
+print(td["observation"].shape)  # (1, 14)
+td["action"] = torch.tensor([1], dtype=torch.int64)
+transition = env.step(td)
+print(transition["next", "reward"])
+env.close()
 ```
 
-観測数・離散行動数に合わせてActor/Criticの入力・出力層を自動で構成します。
+後述の`train()`は、観測数・離散行動数に合わせてActor/Criticの入力・出力層を自動で構成します。
 ActorとCriticはともに、選んだ観測だけを使います。PPOやTensorDictを直接編集する必要はありません。
+保存した重みや設定をチェックポイントと呼び、`TrainingRun`の`run.checkpoint`が評価・動画に使うファイルを指します。
+検証は学習中に報告用モデルを選ぶ処理、最終評価は選択後のモデルを別の初期配置で試す処理です。
 `checkpoint_selection="best"`（既定）では、`run.checkpoint`は検証で選んだ`best.pt`です。
 `checkpoint_selection="latest"`では、最後の更新の`latest.pt`です。`run.evaluate()`、`run.video()`、`compare()`もこの指定に従います。
 完成例は`best`を使い、最後のランダム条件の段階の検証で選びます。
 カリキュラムなしの学習では、初期方策が最良なら`best.pt`に残ります。カリキュラムを使う場合、最後の段階の検証から選びます。
 
 `steps`は全並列世界の上位行動数の合計です。`num_envs * horizon`の正の整数倍にします。
-512並列・horizon 64なら、9,830,400ステップは300ロールアウトです。
+`horizon`は1回の収集で各世界を進めるステップ数です。この収集のまとまりをロールアウトと呼びます。
+512並列・horizon 64なら、1回で32,768サンプルを集め、9,830,400サンプルは300ロールアウトです。
+`validation_envs`は検証エピソード数、`validate_every`は検証する間隔をロールアウト数で指定します。
 `max_seconds`の既定値は`None`です。卒論の比較では同じステップ数を使い、時間上限による打切りは別に記録します。
 PPOの設定を変える場合は、既存の`PPOSettings`を`settings=`に渡せます。
 
@@ -125,14 +139,14 @@ PYTHONPATH=src MUJOCO_GL=egl python tools/train_student.py \
 | `goal_distance` | 1 | 円柱中心から目標までの距離 [m] |
 | `surface_gap` | 1 | 機体中心から円柱外周までの距離、最小0 [m] |
 | `command_velocity` | 2 | 直前に要求した世界XY移動速度 [m/s]。実測速度は`robot_velocity` |
-| `baseline` | 14 | 過去の学習済みモデルと同一の入力・正規化 |
+| `baseline` | 14 | この教材の標準の入力セット。構成と正規化は次の説明を参照 |
 
 `baseline`には、位置課題で使わない姿勢の固定値も互換性のため残っています。
 順序は、`cargo_to_robot / 円柱直径`、`cargo_to_goal / 円柱直径`、固定値`[0,1]`、
 `robot_velocity / 0.2`、`cargo_velocity / 0.2`、固定値`0`、`robot_heading`、`robot_yaw_rate`です。
 名前付きの観測を組み合わせる場合、位置の同じ正規化には`scale=task.config.width`を使います。
 
-独自関数は、次のように`.py`ファイルのトップレベルへ書きます。
+独自関数は、次のように`.py`ファイルの直下へ書きます。他の関数の中へは入れません。
 
 ```python
 from hexapod_transport_rl.student import ObservationTerm, PushState
@@ -182,7 +196,7 @@ from hexapod_transport_rl.student import CylinderPushTask, RewardTerm
 def near_goal_speed(before, after):
     return after.cargo_speed.square() * (after.goal_distance < 0.10)
 
-baseline = CylinderPushTask()
+baseline = CylinderPushTask.baseline()
 task = replace(baseline, rewards={
     **baseline.rewards,
     "near_goal_speed": RewardTerm(near_goal_speed, weight=-2.0, per_second=True),
@@ -215,7 +229,7 @@ ContinuousVelocity(frame="body", speed=0.15)   # 機体座標で解釈
 
 ## 独自関数に渡る状態
 
-`PushState`は、名前付きの物理量を持つスナップショットです。
+`PushState`は、ある時点の名前付き物理量を保存した状態です。`env.state`や報酬関数の`before`・`after`で使います。
 位置・速度は世界XY、yawはrad、角速度はrad/s、時間は秒です。
 スカラーは`(B,)`、XYベクトルは`(B,2)`、テンソルはCPUまたはGPU上にあります。
 
@@ -228,7 +242,7 @@ ContinuousVelocity(frame="body", speed=0.15)   # 機体座標で解釈
 バッチに対してPythonの`if`や`.item()`を使わず、比較、掛け算、`torch.where`などを使います。
 CPU用とGPU用に別の関数を書く必要はありません。
 
-独自関数は名前付きのトップレベル関数にします。lambda・入れ子関数・セル内定義は保存対象にできません。
+独自関数はファイル直下の名前付き関数にします。lambda・入れ子関数・セル内定義は保存対象にできません。
 ノートブックからは、`.py`の課題ファイルを作り、`load_task_file("my_task.py")`で読み込めます。
 課題ファイルは`TASK = CylinderPushTask(...)`を定義します。補助関数も同じファイルに置くか、導入済みのパッケージを使います。
 実行処理を同じファイルに置く場合は`if __name__ == "__main__":`で囲みます。

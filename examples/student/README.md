@@ -1,6 +1,8 @@
 # 学生が編集する課題ファイル
 
-最初は [Colab](../../notebooks/student_api_colab.ipynb) で、標準条件をゼロから学習します。
+最初は [Colab](../../notebooks/student_api_colab.ipynb) のStep 0〜7でAPIを動かし、収録した比較実験を読んでください。
+Step 8〜9では、標準条件をランダムな重みから学習します。このディレクトリは、その後に自分の設定をPythonファイルで管理するときの例です。
+各ファイルの`TASK`が課題設定です。seedは乱数の初期値、カリキュラムは開始配置を易しいものから広げる練習の予定です。
 
 | ファイル | 内容 |
 |---|---|
@@ -25,7 +27,7 @@ MUJOCO_GL=egl python tools/train_student.py examples/student/reward_weights.py \
   --episodes 1024 --evaluation-seed 940000 --video
 ```
 
-initial-checkpointは指定しません。ランダムなActor・Critic、空のAdamから開始します。
+`--initial-checkpoint`は指定しません。方向を選ぶActor・価値を推定するCriticと、最適化手法Adamの更新記録を新規作成します。
 curriculumで開始配置を広げ、最後は位置・向き・目標が全方向ランダムな課題で学習します。
 同じ設定・seedでbaseline.pyも学習し、変更した報酬の影響を比較します。
 reward_only.pyに置き換えると、独自報酬の例を実行できます。
@@ -46,6 +48,6 @@ MUJOCO_GL=egl .venv/bin/python tools/train_student.py \
 新しい入力・行動で学習が進むか、予算も含めて検証します。完成例の成功率をそのまま保証するものではありません。
 compare.pyは比較APIの使用例です。共通の前処理を使い、観測か行動の1つだけを変えます。
 
-独自関数はPythonファイルのトップレベルへ書き、TASKを定義します。
-load_task_fileで読み込むと、保存時に定義ファイルとハッシュもコピーされます。
+独自関数はPythonファイルの直下に名前付き関数として書き、`TASK`を定義します。
+`load_task_file()`で読み込むと、保存時に定義ファイルと、内容を照合する識別値（ハッシュ）もコピーされます。
 詳しくは [APIリファレンス](../../docs/student-api.md) を参照してください。
