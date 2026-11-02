@@ -1,102 +1,44 @@
 # 六足ロボットで円柱を押す強化学習教材
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/student_api_colab.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/cylinder_pushing.ipynb)
 
-TorchRLのPPOチュートリアルを終えた学生が、六足ロボット1台で円柱を目標まで押す課題を使って比較実験を学ぶ教材です。
-方策（Actor）が観測から移動方向を選び、価値を推定するCriticとともにPPOで学習します。
-**押す方向を選ぶActor・Criticはランダムな重みから学習します。**
-18関節を制御する歩行モデルは固定して使います。
-APIで環境を動かした後、報酬1項目を変えた実測例を読み、仮説・実験・評価・考察を自分で進めます。
+TorchRLのPPOチュートリアルを終えた学生向けの教材です。
+六足ロボット1台で円柱を目標まで押す課題を使い、観測・行動・報酬の設定から、学習・比較・考察まで進めます。
+**方向を選ぶPPOはランダムな重みから学習し、18関節を動かす歩行モデルは固定して使います。**
 
-乱数の初期値を学習seedと呼びます。標準条件はseedを変えて3回学習し、平均98.80%成功しました（各学習98.54〜98.93%、各1,024配置で評価）。
-報酬の進捗項を20から40にした条件は平均91.31%で、今回の設定では改善しませんでした。
-本学習はRTX A6000で標準1回あたり平均約38分です。Colab T4の所要時間は未測定です。
+## 進め方
 
-## Colabで実行する
-
-1. [Colab教材を開く](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/student_api_colab.ipynb)。
+1. [cylinder_pushing.ipynbをColabで開く](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/cylinder_pushing.ipynb)。
 2. ランタイムを **T4 GPU / ランタイムバージョン2026.07** に変更する。
-3. Step 0〜7を順に実行し、APIの操作と収録した比較実験を読む。
-4. Step 8で実験を計画し、Step 9から標準条件をゼロから学習する。
+3. Step 0〜7でAPIを動かし、収録した比較実験を読む。ここまではPPOの学習を実行しません。
+4. Step 8で計画を決め、Step 9で標準条件を学習・評価する。
+5. 報酬変更、複数seed、独自報酬、観測・行動の比較へ進み、Step 13で考察と結果を保存する。
 
-Step 1は観測・行動をコードで確かめる実習です。14成分の実値を読み、行動を渡して環境を進め、入力を6成分へ変更します。
-Step 2〜7は、2つの報酬条件を3つの学習seedで実行した比較実験です。学習・検証・最終評価の役割を分けて説明しています。
-ここまではPPOを学習せずに実行できます。まずStep 7で止まり、予想と考察を自分で書いてください。
-Step 8〜9の既定は `PROFILE="research"` で、標準条件の本学習・全方向での評価・動画作成を1回実行します。
-報酬変更は `RUN_REWARD_EXPERIMENT=True`、複数seedの比較は `RUN_MULTISEED_STUDY=True` で追加実行します。
-標準条件を学習した後は、報酬変更のセルだけを実行できます。
-Step 11の独自報酬は `RUN_CUSTOM_REWARD=True` で学習できます。各実験に追加の学習時間が必要です。
-Step 12の観測・行動の比較は `RUN_INPUT_EXPERIMENT=True` で行います。
-`False`のスイッチはその追加学習を実行しません。標準条件だけの場合は、報酬比較は未実施と報告します。
+使い方・用語・API一覧はノートブックにまとめています。
+最初のセルがGitHubから教材を取得して準備します。更新版は新しいランタイムでStep 0から実行してください。
 
-2026.07は、本学習と同じPython 3.12.13・PyTorch 2.11.0の版を使う設定です。
-ランタイムの選択方法と提供期間は[Colab公式の一覧](https://research.google.com/colaboratory/runtime-version-faq.html)にあります。
+`PROFILE="research"`が本学習、`"demo"`は短縮した動作確認です。短縮実行は性能比較には使いません。
+報酬変更などの追加学習は、各セルの`RUN_...`を`True`にすると実行します。
+標準条件しか実行していない場合は、比較は未実施として報告します。
 
-`PROFILE="demo"` は短いAPIの操作確認です。この実行量では押す動作の獲得や成功率の比較はできません。
-最初のセルでGitHubのmainをcloneし、Colabの既存PyTorchを保持して依存を準備します。
-更新版はリンクから開き直し、新しいランタイムで実行してください。
-
-## ゼロから押す動作を学ぶ
-
-1回の`train()`の中で、押しやすい配置から開始位置と向きの範囲を広げます。この練習の予定をカリキュラムと呼びます。
-段階が変わっても同じネットワークの重みと、最適化手法Adamの更新記録を保持します。最後は位置・向き・目標が全方向ランダムな課題です。
-両条件で同じカリキュラム・PPO・総学習量を使い、報酬の重みだけを変えます。
-目標方向に合わせて入出力の座標を回す処理（回転対称化）も両条件で共通です。
-
-- 同じseedの条件間では同じランダム初期重み。異なるseed間では異なる初期重み。
-- 検証は、学習途中のモデルを試して報告用を選ぶ処理。最終評価は、その選択後に成績を測る処理。
-- 検証と最終評価には、最初から全方向ランダムの条件を使用。
-- 最後のランダム条件の検証で保存モデル`best.pt`を選び、別の配置で最終評価。
-- 簡単な段階の学習時間も総学習時間に含む。
-
-完成例の設定は [reward_study.py](examples/student/reward_study.py)、実測値と考察は [results/reward_study](results/reward_study/README.md) にあります。
-学習量・学習時間・全seedの成績・方向別成功率を保存しています。
-GPUと負荷により時間は変わります。RTX A6000の実測時間をColab T4での所要時間として扱いません。
-
-[API](docs/student-api.md)、[実験の進め方](docs/experiment-guide.md)、[学習方法と「ゼロから」の範囲](docs/training-method.md)も参照してください。
-
-## ローカルで実行する
-
-Python 3.12/3.13を使います。CPUの接続確認：
-
-```bash
-uv sync --locked
-MUJOCO_GL=egl .venv/bin/python tools/train_student.py \
-  examples/student/baseline.py --output runs/smoke --smoke
-```
-
-GPUでは次の環境を用意できます。uvの既定はCPU版PyTorchなので、GPU環境へはpipで導入します。
-
-```bash
-python -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
-python -m pip install -e '.[warp,notebook]'
-MUJOCO_GL=egl python tools/run_reward_study.py \
-  --condition baseline --seeds 42 --output runs/scratch_study/main
-```
-
-## 課題
-
-- 円柱：半径0.25 m、高さ0.25 m、質量2 kg。
-- ロボット開始位置：円柱から0.65〜1.00 mの円環、向きは全周でランダム。
-- 目標：円柱から0.30〜0.60 m、全方向でランダム。
-- 成功：位置誤差5 cm未満、円柱速度0.06 m/s未満を0.4秒保持。制限時間40秒。
-- 物理200 Hz、歩行25 Hz、上位行動5 Hz。行動は停止＋世界座標8方向。
-
-## 構成
+## ファイル構成
 
 ```text
-notebooks/student_api_colab.ipynb  # 最初に開く教材
-examples/student/                 # 編集する小さな課題と完成例の設定
-src/hexapod_transport_rl/         # API、PPO、物理、機体・固定歩行モデル
-results/reward_study/             # 実測値、図、動画、学習後の方策
-docs/                            # API、学習方法、実験と考察の手引き
-tools/                           # Colab準備、学習・集計・動画作成
-tests/                           # API、物理、PPO、教材、結果の検証
+cylinder_pushing.ipynb     # 最初に開く教材。説明・実験・API一覧
+colab_setup.py             # インストールと描画の準備
+pyproject.toml             # 必要なライブラリとパッケージ設定
+src/hexapod_transport_rl/  # API・PPO・物理・機体・固定歩行モデル
+results/                  # 教材が表示する表・図・動画・考察
+tests/                   # APIと教材の動作確認（受講時は実行不要）
 ```
 
-runsは実行時の出力でGit管理しません。
+実験を実行すると`runs/`に結果を保存します。Colab終了前にノートブック末尾の保存セルで持ち帰ってください。
 
-```bash
-uv run ruff check src tests tools examples/student
-MUJOCO_GL=egl uv run --extra notebook pytest
-```
+## 収録した比較実験
+
+乱数の初期値（学習seed）を変えて各条件を3回学習し、各モデルを共通の1,024配置で評価しました。
+標準報酬の成功率は平均98.80%、目標への進捗報酬の重みだけを20から40にした条件は平均91.31%でした。
+標準1回の本学習はRTX A6000で平均約38分です。Colab T4の所要時間は未測定です。
+
+教材が使う集計と表示用ファイルを`results/`に同梱しています。
+詳細な評価記録・学習済みPPO・実験の再実行用スクリプトは、[整理前の実験記録](https://github.com/hashimoto-robotics-lab/hexapod-transport-rl/tree/f85f3d754f18fe1efe57d724ffc23697e626c09f/results/reward_study)と[当時のリポジトリ](https://github.com/hashimoto-robotics-lab/hexapod-transport-rl/tree/f85f3d754f18fe1efe57d724ffc23697e626c09f)から参照できます。

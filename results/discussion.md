@@ -86,4 +86,4 @@ Colab T4での本学習時間は未測定である。
 観測・行動・カリキュラム・PPO・総サンプル数を揃え、学習seedと新しい最終評価seedを結果を見る前に決める。
 平均だけでなく全seedの結果、検証曲線、失敗時の距離も報告する。
 
-元データは[runs.csv](runs.csv)、[learning_curve.csv](learning_curve.csv)、[各評価エピソード](evaluations/)、[固定した条件](protocol.json)に保存した。
+元データは[runs.csv](runs.csv)、[learning_curve.csv](learning_curve.csv)、[各評価エピソードの詳細記録](https://github.com/hashimoto-robotics-lab/hexapod-transport-rl/tree/f85f3d754f18fe1efe57d724ffc23697e626c09f/results/reward_study/evaluations)、[固定した条件](protocol.json)に保存した。

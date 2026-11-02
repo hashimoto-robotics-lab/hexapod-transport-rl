@@ -1,6 +1,6 @@
 """Student-facing cylinder pushing: change terms, keep the original PPO/physics.
 
-See docs/student-api.md and examples/student/ for runnable experiments.
+See cylinder_pushing.ipynb for runnable experiments.
 """
 
 import hashlib

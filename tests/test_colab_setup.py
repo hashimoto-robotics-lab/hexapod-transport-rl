@@ -13,7 +13,7 @@ import torch
 
 @pytest.fixture
 def setup_module():
-    path = Path(__file__).resolve().parents[1] / "tools/colab_setup.py"
+    path = Path(__file__).resolve().parents[1] / "colab_setup.py"
     spec = importlib.util.spec_from_file_location("colab_setup_test", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

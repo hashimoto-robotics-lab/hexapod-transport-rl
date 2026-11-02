@@ -27,11 +27,12 @@ def test_cloned_notebook_runs_all_steps(
     # uncommitted changes for this test to exercise the actual clone path.
     remote = tmp_path / "remote"
     remote.mkdir()
-    for name in ("src", "tools", "notebooks", "results"):
+    for name in ("src", "results"):
         shutil.copytree(
             root / name, remote / name, ignore=shutil.ignore_patterns("__pycache__")
         )
-    shutil.copy2(root / "pyproject.toml", remote / "pyproject.toml")
+    for name in ("pyproject.toml", "colab_setup.py", "cylinder_pushing.ipynb"):
+        shutil.copy2(root / name, remote / name)
     for args in (
         ["init", "--initial-branch=main"],
         ["add", "."],
@@ -55,7 +56,7 @@ def test_cloned_notebook_runs_all_steps(
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
     monkeypatch.setenv("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))
     monkeypatch.setenv("OMP_NUM_THREADS", "1")
-    notebook = nbformat.read(root / "notebooks/student_api_colab.ipynb", 4)
+    notebook = nbformat.read(root / "cylinder_pushing.ipynb", 4)
     settings = next(c for c in notebook.cells if 'PROFILE = "research"' in c.source)
     assert "initial_checkpoint=None" in settings.source
     # Only test budgets and optional exercises change. Production starts a full
@@ -257,7 +258,7 @@ assert example_state is not after
     )
     assert any("image/png" in output.get("data", {}) for output in reset_cell.outputs)
     for condition in ("baseline", "progress40"):
-        assert (project / "results/reward_study/videos" / f"{condition}.mp4").is_file()
+        assert (project / "results/videos" / f"{condition}.mp4").is_file()
     errors = "\n".join(
         output.get("text", "")
         for cell in notebook.cells
