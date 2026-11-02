@@ -176,8 +176,7 @@
   },
   "scope": "Flat-ground simulation policy. Hardware validation not performed.",
   "sha256": {
-    "actor.ts": "61364cbb4731d7da8d5a2208457f277b81c6771daac448612efbacfd85617116",
-    "controller.ts": "98b4701b8e1296ab33ac33f20339f8b13fa41ced177699bc91ecd1a71fbcd82c",
-    "checkpoint.pt": "1d8425584eaaeae34615e2caafe199097d97200d0653c2869ad5936cd0ff55ef"
-  }
+    "controller.ts": "98b4701b8e1296ab33ac33f20339f8b13fa41ced177699bc91ecd1a71fbcd82c"
+  },
+  "source_checkpoint_sha256": "1d8425584eaaeae34615e2caafe199097d97200d0653c2869ad5936cd0ff55ef"
 }

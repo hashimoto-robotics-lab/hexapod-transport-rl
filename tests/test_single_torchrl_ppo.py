@@ -1,7 +1,9 @@
 """Single-agent shapes, physical task boundaries and actual TorchRL PPO updates."""
 
+import hashlib
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import mujoco
 import numpy as np
@@ -33,6 +35,16 @@ from hexapod_transport_rl.torchrl_ppo import (
     make_ppo_networks,
     train_ppo,
 )
+
+
+def test_bundled_asset_hashes_refer_to_existing_files():
+    assets = Path(__file__).resolve().parents[1] / "src/hexapod_transport_rl/assets"
+    for metadata, base in (
+        (assets / "manifest.json", assets),
+        (assets / "locomotion/policy.json", assets / "locomotion"),
+    ):
+        for name, digest in json.loads(metadata.read_text())["sha256"].items():
+            assert hashlib.sha256((base / name).read_bytes()).hexdigest() == digest
 
 
 def test_nine_world_directions_and_original_walker_stop_commands():

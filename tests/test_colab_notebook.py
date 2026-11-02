@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -257,6 +258,23 @@ assert example_state is not after
         c for c in notebook.cells if "api_reset" in c.metadata.get("tags", [])
     )
     assert any("image/png" in output.get("data", {}) for output in reset_cell.outputs)
+    # Markdown loaded from a file is displayed without its original directory
+    # as a base URL in Colab. Check links in rendered output as well as sources.
+    markdown = [c.source for c in notebook.cells if c.cell_type == "markdown"]
+    markdown.extend(
+        output["data"]["text/markdown"]
+        for cell in notebook.cells
+        if cell.cell_type == "code"
+        for output in cell.outputs
+        if "text/markdown" in output.get("data", {})
+    )
+    for source in markdown:
+        for target in re.findall(r"\]\(([^)]+)\)", source):
+            assert target.startswith("https://"), target
+            if "#scrollTo=" in target:
+                assert target.rsplit("#scrollTo=", 1)[1] in {
+                    cell.id for cell in notebook.cells
+                }
     for condition in ("baseline", "progress40"):
         assert (project / "results/videos" / f"{condition}.mp4").is_file()
     errors = "\n".join(

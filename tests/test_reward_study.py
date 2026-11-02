@@ -43,6 +43,12 @@ def test_recorded_metrics_and_paired_initialization():
             for row in rows
         )
     for row in rows:
+        assert row["checkpoint_url"].startswith(
+            "https://raw.githubusercontent.com/hashimoto-robotics-lab/"
+            "hexapod-transport-rl/f85f3d754f18fe1efe57d724ffc23697e626c09f/"
+            "results/reward_study/checkpoints/"
+        )
+        assert row["checkpoint_url"].endswith(f"{row['condition']}_s{row['seed']}.pt")
         assert int(row["trained_steps"]) == protocol["training"]["steps"]
         assert int(row["initial_optimizer_entries"]) == 0
         assert float(row["success_rate"]) == int(row["successes"]) / int(
