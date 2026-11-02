@@ -90,6 +90,37 @@ def test_cloned_notebook_runs_all_steps(
         for c in notebook.cells
         if c.cell_type == "code"
     )
+    # Check the values produced by the introductory API exercises, before the
+    # later experiments reuse any variables. These checks stay out of the lesson.
+    first_experiment = next(
+        i
+        for i, cell in enumerate(notebook.cells)
+        if cell.source.startswith("## Step 2 ")
+    )
+    notebook.cells.insert(
+        first_experiment,
+        nbformat.v4.new_code_cell(
+            """
+assert task.actions.action_count == 9
+assert td["observation"].shape == (1, 14)
+assert torch.allclose(td["observation"][:, :2], before.cargo_to_robot / task.config.width)
+assert torch.allclose(td["observation"][:, 2:4], before.cargo_to_goal / task.config.width)
+assert torch.allclose(td["observation"][:, 11:13], before.robot_heading)
+assert action_table.shape == (9, 2)
+assert transition["action"].tolist() == [action_id]
+assert next_td["observation"].shape == (1, 14)
+expected_command = torch.tensor([task.actions.directions[action_id]]) * task.actions.speed
+assert torch.allclose(after.command_velocity, expected_command)
+assert torch.allclose(after.elapsed_seconds - before.elapsed_seconds, torch.tensor([task.config.dt]))
+assert torch.allclose(next_td["reward"], sum(next_td["reward_terms"].values()))
+assert next_td["done"].shape == (1, 1)
+assert small_td["observation"].shape == (1, 6)
+assert torch.allclose(small_td["observation"], td["observation"][:, [0, 1, 2, 3, 11, 12]])
+assert [(row["start"], row["stop"]) for row in small_env.observation_layout] == [(0, 2), (2, 4), (4, 6)]
+assert env.is_closed and small_env.is_closed
+""".strip()
+        ),
+    )
     manager = KernelManager(kernel_name="python3")
     manager.kernel_spec.argv = [
         sys.executable,
@@ -180,6 +211,10 @@ def test_cloned_notebook_runs_all_steps(
         c for c in notebook.cells if "completed_results" in c.metadata.get("tags", [])
     )
     assert any(o.output_type == "display_data" for o in completed.outputs)
+    reset_cell = next(
+        c for c in notebook.cells if "api_reset" in c.metadata.get("tags", [])
+    )
+    assert any("image/png" in output.get("data", {}) for output in reset_cell.outputs)
     for condition in ("baseline", "progress40"):
         assert (project / "results/reward_study/videos" / f"{condition}.mp4").is_file()
     errors = "\n".join(

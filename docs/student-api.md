@@ -13,7 +13,9 @@
 
 [Step 0〜13のノートブック](../notebooks/student_api_colab.ipynb)を用意しています。
 最初のセルでGitHubから教材をcloneします。[README](../README.md#colabで実行する)からColabを開けます。
-Step 0〜7では、実際に学習した標準条件と報酬1項目の比較を読みます。
+Step 1では、APIで課題と環境を作り、`reset()`の14成分の実値と、行動番号から`step()`への流れを確かめます。
+`ObservationTerm`で入力を6成分に変える練習と、円柱速度を追加して8成分にする小演習もあります。
+Step 2〜7では、実際に学習した標準条件と報酬1項目の比較を読みます。
 Step 8〜9では標準条件をゼロから学習し、評価と動画を確認します。
 報酬変更・複数seed比較・独自報酬は、それぞれの実行スイッチを有効にして進みます。
 [実測結果](../results/reward_study/discussion.md)と[実験の手引き](experiment-guide.md)も同梱しています。

@@ -15,9 +15,10 @@
 
 1. [Colab教材を開く](https://colab.research.google.com/github/hashimoto-robotics-lab/hexapod-transport-rl/blob/main/notebooks/student_api_colab.ipynb)。
 2. ランタイムを **T4 GPU / ランタイムバージョン2026.07** に変更する。
-3. 完成例を読み、標準条件をゼロから学習する。
+3. Step 1でAPIを動かし、完成例を読んでから標準条件をゼロから学習する。
 
-Step 0〜7は実際に学習した2条件×3 seedの完成例です。読むための再学習は不要です。
+Step 1は観測・行動をコードで確かめる実習です。14成分の実値を読み、行動を渡して環境を進め、入力を6成分へ変更します。
+Step 2〜7は実際に学習した2条件×3 seedの完成例です。読むための再学習は不要です。
 Step 8〜9の既定は `PROFILE="research"` で、標準条件の本学習・全方向での評価・動画作成を1回実行します。
 報酬変更は `RUN_REWARD_EXPERIMENT=True`、複数seedの比較は `RUN_MULTISEED_STUDY=True` で追加実行します。
 標準条件を学習した後は、報酬変更のセルだけを実行できます。
